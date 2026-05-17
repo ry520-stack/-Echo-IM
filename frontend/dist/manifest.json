@@ -1,0 +1,16 @@
+{
+  "name": "Echo IM",
+  "short_name": "Echo",
+  "description": "极客美学即时通讯",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#6366f1",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+version: '3.9'
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-echo_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-echo_pass}
+      POSTGRES_DB: ${DB_NAME:-echo_db}
+    ports:
+      - '5433:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${DB_USER:-echo_user} -d ${DB_NAME:-echo_db}']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    ports:
+      - '9090:3001'
+    environment:
+      DATABASE_URL: postgresql://${DB_USER:-echo_user}:${DB_PASSWORD:-echo_pass}@db:5432/${DB_NAME:-echo_db}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      QQ_SMTP_USER: ${QQ_SMTP_USER}
+      QQ_SMTP_PASS: ${QQ_SMTP_PASS}
+      PORT: '3001'
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - '8080:80'
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:

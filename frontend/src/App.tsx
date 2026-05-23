@@ -1,4 +1,5 @@
-import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { useEffect } from 'react';
+import { HashRouter, Navigate, Route, Routes, useNavigate, useLocation } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { SocketProvider } from './contexts/SocketContext';
@@ -15,8 +16,42 @@ import SearchMessagesPage from './pages/SearchMessagesPage';
 import FavoritesPage from './pages/FavoritesPage';
 import TimeCapsulePage from './pages/TimeCapsulePage';
 import ChatSettingsPage from './pages/ChatSettingsPage';
+import StarZoneManagePage from './pages/StarZoneManagePage';
 import NotificationProvider from './components/NotificationProvider';
+import { CallProvider } from './contexts/CallContext';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import { is5Plus } from './utils/env';
+
+// 5+ App 物理返回键拦截
+function BackButtonHandler() {
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  useEffect(() => {
+    if (!is5Plus()) return;
+    const plus = (window as any).plus;
+
+    const onBack = () => {
+      // 登录/注册页：直接退出
+      if (location.pathname === '/login' || location.pathname === '/register') {
+        plus.runtime.quit();
+        return;
+      }
+      // 首页（ChatPage index）：双击退出
+      if (location.pathname === '/' || location.pathname === '') {
+        plus.runtime.quit();
+        return;
+      }
+      // 其他页面：路由回退
+      navigate(-1);
+    };
+
+    plus.key.addEventListener('backbutton', onBack);
+    return () => plus.key.removeEventListener('backbutton', onBack);
+  }, [location.pathname, navigate]);
+
+  return null;
+}
 
 export default function App() {
   return (
@@ -24,7 +59,9 @@ export default function App() {
       <ThemeProvider>
         <ToastProvider>
           <SocketProvider>
+            <CallProvider>
             <HashRouter>
+              <BackButtonHandler />
               <NotificationProvider>
               <Routes>
                 <Route path="/login" element={<LoginPage />} />
@@ -43,12 +80,14 @@ export default function App() {
                   <Route path="/time-capsule" element={<TimeCapsulePage />} />
                   <Route path="/orbit/:userId" element={<MomentsPage />} />
                   <Route path="/chat/:userId/settings" element={<ChatSettingsPage />} />
+                  <Route path="/star-zones" element={<StarZoneManagePage />} />
                 </Route>
 
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
               </NotificationProvider>
             </HashRouter>
+            </CallProvider>
           </SocketProvider>
         </ToastProvider>
       </ThemeProvider>

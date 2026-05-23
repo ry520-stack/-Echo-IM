@@ -3,10 +3,12 @@ import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { api } from '../api/client';
+import { assetUrl } from '../utils/assetUrl';
+import { api, getServerUrl } from '../api/client';
 import { compressImage } from '../utils/compressImage';
 import FloatingStackGallery from '../components/FloatingStackGallery';
 import PaginatedGridGallery from '../components/PaginatedGridGallery';
+import StarZoneSelector, { type PrivacyType } from '../components/StarZoneSelector';
 
 interface MomentUser {
   id: string;
@@ -98,15 +100,12 @@ export default function MomentsPage() {
   const [newContent, setNewContent] = useState('');
   const [uploadedImages, setUploadedImages] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
+  const uploadingCount = useRef(0);
   const [posting, setPosting] = useState(false);
-  const [privacy, setPrivacy] = useState<Privacy>('public');
+  const [privacy, setPrivacy] = useState<PrivacyType>('PUBLIC');
+  const [privacyGroups, setPrivacyGroups] = useState<string[]>([]);
   const [scheduleTime, setScheduleTime] = useState('');
-  const [showStarZone, setShowStarZone] = useState(false);
-  const [starZones, setStarZones] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem('echo-star-zones') || '["可见星域","不可见星域"]'); } catch { return ['可见星域', '不可见星域']; }
-  });
-  const [selectedZones, setSelectedZones] = useState<Set<string>>(new Set());
-  const [newZoneName, setNewZoneName] = useState('');
+  const [showStarZoneSelector, setShowStarZoneSelector] = useState(false);
   // Per-moment gallery mode + cover index
   const [galleryModes, setGalleryModes] = useState<Record<string, 'stack' | 'grid'>>(() => {
     try { return JSON.parse(localStorage.getItem('echo-gallery-modes') || '{}'); } catch { return {}; }
@@ -146,10 +145,11 @@ export default function MomentsPage() {
   useEffect(() => { fetchMoments(); }, []);
 
   const uploadImage = async (file: File) => {
+    uploadingCount.current += 1;
     setUploading(true);
     try {
       const compressed = await compressImage(file);
-      const base = localStorage.getItem('echo-server-url') || (import.meta as any).env?.VITE_API_BASE || '';
+      const base = getServerUrl();
       const token = localStorage.getItem('echo-token');
       const formData = new FormData();
       formData.append('file', compressed);
@@ -164,7 +164,8 @@ export default function MomentsPage() {
     } catch (e: any) {
       toast(e.message || '上传失败', 'error');
     } finally {
-      setUploading(false);
+      uploadingCount.current -= 1;
+      if (uploadingCount.current === 0) setUploading(false);
     }
   };
 
@@ -179,7 +180,8 @@ export default function MomentsPage() {
       const result = await api<{ id: string }>('POST', '/api/moments', {
         content: newContent.trim(),
         images: uploadedImages,
-        privacy,
+        privacyType: privacy,
+        targetGroupIds: privacyGroups,
         scheduledAt: scheduleTime || undefined,
       });
       if (result?.id) {
@@ -193,7 +195,8 @@ export default function MomentsPage() {
       setNewContent('');
       setUploadedImages([]);
       setCoverIndex(0);
-      setPrivacy('public');
+      setPrivacy('PUBLIC');
+      setPrivacyGroups([]);
       setScheduleTime('');
       setComposerMode('stack');
       setShowComposer(false);
@@ -250,20 +253,20 @@ export default function MomentsPage() {
   const getDisplayName = (u: MomentUser) => u.nickname || u.username;
   const isLiked = (m: MomentData) => m.likes?.some(l => l.userId === user?.id);
   const parseImages = (images: string): string[] => {
-    try { return JSON.parse(images); } catch { return []; }
+    try { return (JSON.parse(images) as string[]).map(assetUrl); } catch { return []; }
   };
 
-  const privacyLabel: Record<Privacy, string> = { public: '公开', private: '私密', friends: '星域' };
+  const privacyLabel: Record<string, string> = { PUBLIC: '🌍 公开', PRIVATE: '🔒 仅自己可见', VISIBLE_TO: '👁️ 部分可见', INVISIBLE_TO: '🚫 不给谁看' };
 
   return (
     <div className="flex h-full overflow-y-auto flex-col bg-gray-50 dark:bg-gray-950">
       <header className="flex items-center gap-3 border-b border-gray-200 bg-white px-4 py-3 dark:border-gray-700 dark:bg-gray-900 shrink-0">
         <button onClick={() => nav('/')} className="text-sm text-primary-500 hover:underline">← 返回</button>
-        <h1 className="flex-1 text-lg font-bold text-gray-900 dark:text-gray-100">星轨</h1>
+        <h1 className="flex-1 text-lg font-bold text-gray-900 dark:text-gray-100">动态</h1>
         <button onClick={() => {
           const draft = localStorage.getItem('echo-draft');
           if (draft) {
-            try { const d = JSON.parse(draft); setNewContent(d.content || ''); setUploadedImages(d.images || []); setPrivacy(d.privacy || 'public'); setScheduleTime(d.scheduleTime || ''); localStorage.removeItem('echo-draft'); } catch {}
+            try { const d = JSON.parse(draft); setNewContent(d.content || ''); setUploadedImages(d.images || []); setPrivacy(d.privacy || 'PUBLIC'); setScheduleTime(d.scheduleTime || ''); localStorage.removeItem('echo-draft'); } catch {}
           }
           setShowComposer(true);
         }} className="text-xl p-1 text-primary-500 hover:scale-110 transition-transform">☄️</button>
@@ -283,7 +286,7 @@ export default function MomentsPage() {
                   <div key={moment.id} className="rounded-2xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900 overflow-hidden">
                     <div className="flex items-center gap-3 p-4 pb-2">
                       <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-100 text-sm font-bold text-primary-600 dark:bg-primary-900/30">
-                        {moment.user.avatar ? <img src={moment.user.avatar} alt="" className="h-full w-full rounded-xl object-cover" /> : getDisplayName(moment.user)[0]?.toUpperCase()}
+                        {moment.user.avatar ? <img src={assetUrl(moment.user.avatar)} alt="" className="h-full w-full rounded-xl object-cover" /> : getDisplayName(moment.user)[0]?.toUpperCase()}
                       </div>
                       <div>
                         <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">{getDisplayName(moment.user)}</p>
@@ -379,7 +382,7 @@ export default function MomentsPage() {
               }
               setShowComposer(false); setNewContent(''); setUploadedImages([]);
             }} className="text-sm text-gray-500">取消</button>
-            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">发星轨</h2>
+            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">发动态</h2>
             <button onClick={postMoment} disabled={posting || (!newContent.trim() && uploadedImages.length === 0)} className="rounded-lg bg-primary-500 px-4 py-1.5 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-50">
               {posting ? '...' : scheduleTime ? '定时发射' : '发布'}
             </button>
@@ -400,7 +403,7 @@ export default function MomentsPage() {
               <Reorder.Group axis="x" values={uploadedImages} onReorder={setUploadedImages} className="mt-3 flex gap-2 overflow-x-auto pb-2">
                 {uploadedImages.map((url, i) => (
                   <Reorder.Item key={url} value={url} className="relative shrink-0 w-24 h-24 cursor-grab active:cursor-grabbing" whileDrag={{ scale: 1.05, boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}>
-                    <img src={url} alt="" className="w-full h-full rounded-xl object-cover" onError={(e) => { (e.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="%23f0f0f0" width="100" height="100"/><text x="50" y="55" text-anchor="middle" fill="%23999" font-size="12">🌌</text></svg>'; }} />
+                    <img src={assetUrl(url)} alt="" className="w-full h-full rounded-xl object-cover" onError={(e) => { (e.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="%23f0f0f0" width="100" height="100"/><text x="50" y="55" text-anchor="middle" fill="%23999" font-size="12">🌌</text></svg>'; }} />
                     <button onClick={() => { removeImage(i); if (coverIndex >= uploadedImages.length - 1) setCoverIndex(0); }} className="absolute bottom-1 left-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/30 text-white/70 text-[10px] z-10 hover:bg-red-500/80 hover:text-white transition-colors">✕</button>
                     {i === coverIndex && <span className="absolute top-1 left-1 bg-primary-500 text-white text-[10px] px-1.5 py-0.5 rounded-full z-10">封面</span>}
                     {i !== coverIndex && (
@@ -421,14 +424,11 @@ export default function MomentsPage() {
             {/* Privacy */}
             <div className="mt-4">
               <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">谁可以看</p>
-              <div className="flex gap-2">
-                {(['public', 'friends', 'private'] as Privacy[]).map(p => (
-                  <button key={p} onClick={() => { if (p === 'friends') { setShowStarZone(true); return; } setPrivacy(p); }} className={`relative rounded-lg px-4 py-2 text-xs font-medium transition-colors ${privacy === p ? 'bg-primary-500 text-white' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'}`}>
-                    {privacyLabel[p]}
-                    {p === 'friends' && <span className="absolute -top-1.5 -right-2 text-[8px] bg-red-400 text-white px-1 rounded-full leading-tight">开发中</span>}
-                  </button>
-                ))}
-              </div>
+              <button type="button" onClick={() => setShowStarZoneSelector(true)}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gray-100 dark:bg-gray-800 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
+                {privacyLabel[privacy]}
+                {privacyGroups.length > 0 && <span className="text-primary-500">({privacyGroups.length}个组)</span>}
+              </button>
             </div>
 
             {/* Schedule */}
@@ -495,41 +495,16 @@ export default function MomentsPage() {
         </div>
       )}
 
-      {/* Star Zone Modal */}
-      {showStarZone && (
-        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/40 backdrop-blur-sm" onClick={() => setShowStarZone(false)}>
-          <div className="w-full max-h-[70vh] overflow-y-auto rounded-t-3xl bg-white dark:bg-gray-900 p-5" onClick={e => e.stopPropagation()}>
-            <h3 className="text-base font-bold text-gray-900 dark:text-gray-100 mb-4">选择星域</h3>
-            <div className="space-y-2">
-              {starZones.map(zone => (
-                <label key={zone} className="flex items-center gap-3 p-3 rounded-xl bg-gray-50 dark:bg-gray-800 cursor-pointer">
-                  <input type="checkbox" checked={selectedZones.has(zone)} onChange={() => {
-                    setSelectedZones(prev => { const next = new Set(prev); if (next.has(zone)) next.delete(zone); else next.add(zone); return next; });
-                  }} className="w-4 h-4 accent-primary-500" />
-                  <span className="text-sm text-gray-700 dark:text-gray-300">{zone}</span>
-                </label>
-              ))}
-            </div>
-            {/* Add custom zone */}
-            <div className="mt-3 flex gap-2">
-              <input type="text" value={newZoneName} onChange={e => setNewZoneName(e.target.value)} placeholder="自定义星域名称..."
-                className="flex-1 rounded-xl bg-gray-50 dark:bg-gray-800 px-4 py-2 text-sm" />
-              <button onClick={() => {
-                const name = newZoneName.trim();
-                if (name && !starZones.includes(name)) {
-                  const updated = [...starZones, name];
-                  setStarZones(updated);
-                  localStorage.setItem('echo-star-zones', JSON.stringify(updated));
-                  setNewZoneName('');
-                }
-              }} className="rounded-xl bg-primary-500 px-4 py-2 text-sm text-white">+ 创建</button>
-            </div>
-            <button onClick={() => setShowStarZone(false)} className="w-full mt-4 rounded-xl bg-primary-500 py-3 text-sm font-semibold text-white">
-              确定 ({selectedZones.size} 个星域)
-            </button>
-          </div>
-        </div>
-      )}
+      <StarZoneSelector
+        open={showStarZoneSelector}
+        onClose={() => setShowStarZoneSelector(false)}
+        onManageGroups={() => nav('/friends')}
+        onConfirm={(type, groupIds) => {
+          setPrivacy(type);
+          setPrivacyGroups(groupIds);
+          setShowStarZoneSelector(false);
+        }}
+      />
     </div>
   );
 }

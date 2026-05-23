@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
-import { compressImage } from '../utils/compressImage';
 import { useToast } from '../contexts/ToastContext';
+import { useBackground } from '../hooks/useBackground';
+import { assetUrl } from '../utils/assetUrl';
 
 interface Peer {
   id: string;
@@ -12,6 +13,13 @@ interface Peer {
   digitalId: number;
 }
 
+interface FriendGroup {
+  id: string;
+  name: string;
+  color: string;
+  members: { peerId: string; peer: { id: string; nickname: string; username: string; avatar: string } }[];
+}
+
 export default function ChatSettingsPage() {
   const { userId } = useParams();
   const nav = useNavigate();
@@ -19,9 +27,12 @@ export default function ChatSettingsPage() {
   const [peer, setPeer] = useState<Peer | null>(null);
   const [alias, setAlias] = useState('');
   const [saving, setSaving] = useState(false);
-  const [bgUrl, setBgUrl] = useState(() => localStorage.getItem(`echo-bg-${userId}`) || '');
+  const { getChatBg, setChatBg, uploadAndGetUrl } = useBackground();
   const [bgUploading, setBgUploading] = useState(false);
   const bgInputRef = useRef<HTMLInputElement>(null);
+  const currentBgUrl = peer ? getChatBg(peer.id) : '';
+  const [groups, setGroups] = useState<FriendGroup[]>([]);
+  const [groupMembership, setGroupMembership] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!userId) return;
@@ -31,6 +42,21 @@ export default function ChatSettingsPage() {
     }).catch(() => {});
   }, [userId]);
 
+  useEffect(() => {
+    api<FriendGroup[]>('GET', '/api/friend-groups')
+      .then(groups => {
+        setGroups(groups);
+        if (peer) {
+          const membership = new Set<string>();
+          groups.forEach(g => {
+            if (g.members.some(m => m.peerId === peer.id)) membership.add(g.id);
+          });
+          setGroupMembership(membership);
+        }
+      })
+      .catch(() => {});
+  }, [userId, peer]);
+
   const saveAlias = async () => {
     if (!peer) return;
     setSaving(true);
@@ -39,6 +65,20 @@ export default function ChatSettingsPage() {
       toast('备注已保存', 'success');
     } catch { toast('保存失败', 'error'); }
     finally { setSaving(false); }
+  };
+
+  const toggleGroup = async (groupId: string) => {
+    if (!peer) return;
+    const isMember = groupMembership.has(groupId);
+    try {
+      if (isMember) {
+        await api('DELETE', `/api/friend-groups/${groupId}/members/${peer.id}`);
+        setGroupMembership(prev => { const next = new Set(prev); next.delete(groupId); return next; });
+      } else {
+        await api('POST', `/api/friend-groups/${groupId}/members`, { peerId: peer.id });
+        setGroupMembership(prev => new Set(prev).add(groupId));
+      }
+    } catch (e: any) { toast(e.message || '操作失败', 'error'); }
   };
 
   if (!peer) return <div className="flex h-full items-center justify-center text-gray-400">加载中...</div>;
@@ -52,7 +92,7 @@ export default function ChatSettingsPage() {
       <div className="p-4 space-y-4">
         <div className="flex items-center gap-4 p-4 rounded-2xl bg-white dark:bg-gray-900">
           <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary-500 text-2xl font-bold text-white">
-            {peer.avatar ? <img src={peer.avatar} alt="" className="h-full w-full rounded-2xl object-cover" /> : peer.nickname?.[0] || peer.username[0]}
+            {peer.avatar ? <img src={assetUrl(peer.avatar)} alt="" className="h-full w-full rounded-2xl object-cover" /> : peer.nickname?.[0] || peer.username[0]}
           </div>
           <div>
             <p className="text-base font-semibold text-gray-900 dark:text-gray-100">{peer.nickname || peer.username}</p>
@@ -68,41 +108,51 @@ export default function ChatSettingsPage() {
           <label className="text-sm text-gray-600 dark:text-gray-400">聊天背景</label>
           <div className="flex gap-3 items-center">
             <div className="w-20 h-20 rounded-xl bg-gray-100 dark:bg-gray-800 overflow-hidden">
-              {bgUrl ? <img src={bgUrl} alt="" className="w-full h-full object-cover" /> : <div className="flex items-center justify-center h-full text-2xl text-gray-300">🖼</div>}
+              {currentBgUrl ? <img src={assetUrl(currentBgUrl)} alt="" className="w-full h-full object-cover" /> : <div className="flex items-center justify-center h-full text-2xl text-gray-300">🖼</div>}
             </div>
             <div className="flex flex-col gap-2 flex-1">
               <button onClick={() => bgInputRef.current?.click()} disabled={bgUploading} className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs text-white">
-                {bgUploading ? '上传中...' : '选择图片'}
+                {bgUploading ? '上传中...' : '选择专属背景'}
               </button>
-              {bgUrl && <button onClick={() => { setBgUrl(''); localStorage.removeItem(`echo-bg-${userId}`); }} className="rounded-lg bg-red-100 dark:bg-red-900/30 px-3 py-1.5 text-xs text-red-500">移除背景</button>}
+              {currentBgUrl && (
+                <button onClick={async () => { if (peer) await setChatBg(peer.id, ''); toast('已恢复默认', 'info'); }} className="rounded-lg bg-red-100 dark:bg-red-900/30 px-3 py-1.5 text-xs text-red-500">
+                  恢复默认
+                </button>
+              )}
               <input ref={bgInputRef} type="file" accept="image/*" className="hidden" onChange={async (e) => {
                 const f = e.target.files?.[0]; if (!f) return;
                 setBgUploading(true);
                 try {
-                  const compressed = await compressImage(f);
-                  const base = localStorage.getItem('echo-server-url') || '';
-                  const token = localStorage.getItem('echo-token');
-                  const fd = new FormData(); fd.append('file', compressed);
-                  const res = await fetch(base + '/api/upload/chat-image', { method: 'POST', headers: { 'Authorization': `Bearer ${token}` }, body: fd });
-                  const data = await res.json();
-                  if (res.ok) { setBgUrl(data.url); localStorage.setItem(`echo-bg-${userId}`, data.url); }
-                } catch { /* */ }
-                finally { setBgUploading(false); }
+                  const url = await uploadAndGetUrl(f);
+                  if (peer) await setChatBg(peer.id, url);
+                  toast('专属背景设置成功', 'success');
+                } catch (err: any) { toast(err.message || '上传失败', 'error'); }
+                finally { setBgUploading(false); e.target.value = ''; }
               }} />
             </div>
           </div>
         </div>
         <div className="rounded-2xl bg-white dark:bg-gray-900 p-4 space-y-3">
-          <label className="text-sm text-gray-600 dark:text-gray-400">星域分组</label>
-          {(() => {
-            const zones = JSON.parse(localStorage.getItem('echo-star-zones') || '["可见星域","不可见星域"]');
-            return zones.map((zone: string) => (
-              <label key={zone} className="flex items-center gap-3 p-2 rounded-lg bg-gray-50 dark:bg-gray-800">
-                <input type="checkbox" className="w-4 h-4 accent-primary-500" />
-                <span className="text-sm text-gray-700 dark:text-gray-300">{zone}</span>
+          <div className="flex items-center justify-between">
+            <label className="text-sm text-gray-600 dark:text-gray-400">星域分组</label>
+            <button onClick={() => window.location.hash = '#/star-zones'} className="text-xs text-primary-500 hover:underline">管理星域</button>
+          </div>
+          {groups.length === 0 ? (
+            <p className="text-xs text-gray-400 py-2">暂无星域分组，点击"管理星域"创建</p>
+          ) : (
+            groups.map(group => (
+              <label key={group.id} className="flex items-center gap-3 p-2 rounded-lg bg-gray-50 dark:bg-gray-800 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="w-4 h-4 accent-primary-500"
+                  checked={groupMembership.has(group.id)}
+                  onChange={() => toggleGroup(group.id)}
+                />
+                <span className="inline-block w-3 h-3 rounded-full" style={{ backgroundColor: group.color || '#6366f1' }} />
+                <span className="text-sm text-gray-700 dark:text-gray-300">{group.name}</span>
               </label>
-            ));
-          })()}
+            ))
+          )}
           <p className="text-xs text-gray-400">将此好友加入或移出星域</p>
         </div>
       </div>

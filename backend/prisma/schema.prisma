@@ -20,6 +20,9 @@ model User {
   allowStrangerMessage  Boolean  @default(true)
   readReceiptsEnabled   Boolean  @default(true)
   lastSeenAt           DateTime @default(now())
+  bgConversation       String   @default("")
+  bgGravity            String   @default("")
+  bgChat               String   @default("")
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
@@ -34,21 +37,31 @@ model User {
   moments          Moment[]
   momentLikes      MomentLike[]
   momentComments   MomentComment[]
-  blockedUsers     BlockList[]     @relation("BlockerRelation")
-  blockedBy        BlockList[]     @relation("BlockedRelation")
+  blockedUsers       BlockList[]        @relation("BlockerRelation")
+  blockedBy          BlockList[]        @relation("BlockedRelation")
+  createdGroupZones  FriendGroup[]      @relation("GroupOwner")
+  assignedGroupZones FriendGroupMember[] @relation("GroupPeer")
+  momentPermissions  MomentPermission[]
+  hiddenMessages     MessageHidden[]
+  userConversationClears UserConversationClear[]
+  groupConversationClears GroupConversationClear[]
 }
 
 model Friend {
-  id        String   @id @default(uuid())
+  id        String    @id @default(uuid())
   userId    String
   friendId  String
-  alias     String   @default("")
-  status    String   @default("pending")
-  isPinned  Boolean  @default(false)
+  alias     String    @default("")
+  status    String    @default("pending")
+  isPinned  Boolean   @default(false)
   chatBackground String @default("")
-  muted     Boolean  @default(false)
-  hidden    Boolean  @default(false)
-  createdAt DateTime @default(now())
+  muted     Boolean   @default(false)
+  hidden    Boolean   @default(false)
+  deletedBy String?
+  deletedAt DateTime?
+  blockedBy String?
+  blockedAt DateTime?
+  createdAt DateTime  @default(now())
 
   user   User @relation("UserFriendships", fields: [userId], references: [id], onDelete: Cascade)
   friend User @relation("FriendOf", fields: [friendId], references: [id], onDelete: Cascade)
@@ -100,7 +113,8 @@ model Message {
   group    GroupChat? @relation(fields: [groupId], references: [id], onDelete: Cascade)
   replyTo  Message?   @relation("ReplyTo", fields: [replyToId], references: [id], onDelete: SetNull)
   replies  Message[]  @relation("ReplyTo")
-  readReceipts ReadReceipt[]
+  readReceipts  ReadReceipt[]
+  hiddenBy      MessageHidden[]
 
   @@index([senderId, receiverId])
   @@index([groupId])
@@ -134,17 +148,56 @@ model Emoji {
 }
 
 model Moment {
-  id        String   @id @default(uuid())
-  userId    String
-  content   String
-  images    String   @default("[]")
-  createdAt DateTime @default(now())
+  id           String             @id @default(uuid())
+  userId       String
+  content      String
+  images       String             @default("[]")
+  privacyType  String             @default("PUBLIC")
+  createdAt    DateTime           @default(now())
 
-  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  likes    MomentLike[]
-  comments MomentComment[]
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  likes        MomentLike[]
+  comments     MomentComment[]
+  permissions  MomentPermission[]
 
   @@index([userId, createdAt])
+}
+
+model MomentPermission {
+  id       String        @id @default(uuid())
+  momentId String
+  groupId  String?
+  userId   String?
+
+  moment   Moment        @relation(fields: [momentId], references: [id], onDelete: Cascade)
+  group    FriendGroup?  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user     User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([momentId])
+}
+
+model FriendGroup {
+  id          String             @id @default(uuid())
+  userId      String
+  name        String
+  color       String             @default("#6366f1")
+  createdAt   DateTime           @default(now())
+
+  owner       User               @relation("GroupOwner", fields: [userId], references: [id], onDelete: Cascade)
+  members     FriendGroupMember[]
+  permissions MomentPermission[]
+
+  @@unique([userId, name])
+}
+
+model FriendGroupMember {
+  groupId String
+  peerId  String
+
+  group   FriendGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  peer    User        @relation("GroupPeer", fields: [peerId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, peerId])
 }
 
 model MomentLike {
@@ -219,4 +272,44 @@ model BlockList {
   @@unique([blockerId, blockedId])
   @@index([blockerId])
   @@index([blockedId])
+}
+
+model MessageHidden {
+  id        String   @id @default(uuid())
+  userId    String
+  messageId String
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, messageId])
+  @@index([userId])
+  @@index([messageId])
+}
+
+model UserConversationClear {
+  id        String   @id @default(uuid())
+  userId    String
+  peerId    String
+  clearedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, peerId])
+  @@index([userId])
+  @@index([peerId])
+}
+
+model GroupConversationClear {
+  id        String   @id @default(uuid())
+  userId    String
+  groupId   String
+  clearedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, groupId])
+  @@index([userId])
+  @@index([groupId])
 }

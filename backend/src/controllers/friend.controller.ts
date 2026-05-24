@@ -10,6 +10,33 @@ export async function getFriends(req: Request, res: Response) {
   }
 }
 
+export async function getRelationshipSummary(req: Request, res: Response) {
+  try {
+    const summary = await friendService.getRelationshipSummary(req.userId, req.params.peerId);
+    res.json(summary);
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
+}
+
+export async function updateRelationshipSettings(req: Request, res: Response) {
+  try {
+    const summary = await friendService.updateRelationshipSettings(req.userId, req.params.peerId, req.body || {});
+    res.json(summary);
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
+}
+
+export async function getEchoRankings(req: Request, res: Response) {
+  try {
+    const rankings = await friendService.getEchoRankings(req.userId);
+    res.json(rankings);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+}
+
 export async function getPending(req: Request, res: Response) {
   try {
     const requests = await friendService.getPendingRequests(req.userId);

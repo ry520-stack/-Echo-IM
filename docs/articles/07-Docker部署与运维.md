@@ -43,9 +43,9 @@ scp -i ~/.ssh/win_key Echo.tar.gz root@8.140.194.214:~/
 # ECS 上部署
 tar -xzf Echo.tar.gz -C ~/Echo
 cat > ~/Echo/.env << EOF
-DB_USER=echo_user DB_PASSWORD=echo_pass DB_NAME=echo_db
-JWT_SECRET=EchoIM2026SecretKey!@# JWT_EXPIRES_IN=7d
-SMTP_USER=ranyv520@gmail.com SMTP_PASS=xxx
+DB_USER=your_db_user DB_PASSWORD=your_db_password DB_NAME=your_db_name
+JWT_SECRET=your_jwt_secret JWT_EXPIRES_IN=7d
+SMTP_USER=your_email@example.com SMTP_PASS=your_email_password
 EOF
 cd ~/Echo && docker compose -f docker-compose.prod.yml up -d --build
 ```

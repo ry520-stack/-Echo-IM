@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useId } from 'react';
 import { motion, useMotionValue } from 'framer-motion';
 import '../styles/voice-aura.css';
 
@@ -13,13 +13,14 @@ export default function GooeySwipe({ onSend, onCancel, duration }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const knobSize = 44;
   const maxDrag = useRef(200);
+  const filterId = useId();
 
   useEffect(() => {
     if (containerRef.current) {
       maxDrag.current = containerRef.current.offsetWidth - knobSize - 4;
     }
     if (duration >= 60) onSend();
-  }, [duration]);
+  }, [duration, onSend]);
 
   const handleDragEnd = (_: any, info: { offset: { x: number } }) => {
     if (info.offset.x > maxDrag.current * 0.6) {

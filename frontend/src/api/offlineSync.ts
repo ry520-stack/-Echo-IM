@@ -44,12 +44,14 @@ export function readCache(path: string): { data: unknown; ts: number } | null {
 
 export function invalidateCache(pattern: string) {
   const prefix = CACHE_PREFIX;
+  const keysToRemove: string[] = [];
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i);
     if (k && k.startsWith(prefix) && k.includes(pattern)) {
-      localStorage.removeItem(k);
+      keysToRemove.push(k);
     }
   }
+  keysToRemove.forEach(k => localStorage.removeItem(k));
 }
 
 export function queueOp(method: string, path: string, body?: unknown) {

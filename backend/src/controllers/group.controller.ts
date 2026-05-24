@@ -10,14 +10,46 @@ export async function getMyGroups(req: Request, res: Response) {
   }
 }
 
+export async function getGroupDetail(req: Request, res: Response) {
+  try {
+    const group = await groupService.getGroupDetail(req.params.id, req.userId);
+    res.json(group);
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
+}
+
 export async function createGroup(req: Request, res: Response) {
-  const { name, memberIds } = req.body;
+  const { name, memberIds, avatar } = req.body;
   if (!name || !name.trim()) {
     return res.status(400).json({ error: '群组名称为必填' });
   }
   try {
-    const group = await groupService.createGroup(req.userId, name.trim(), memberIds || []);
+    const group = await groupService.createGroup(req.userId, name.trim(), memberIds || [], avatar || undefined);
     res.status(201).json(group);
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
+}
+
+export async function updateGroupProfile(req: Request, res: Response) {
+  const { name, avatar, notice } = req.body;
+  if (name !== undefined && !String(name).trim()) {
+    return res.status(400).json({ error: '群组名称不能为空' });
+  }
+  try {
+    const group = await groupService.updateGroupProfile(req.params.id, req.userId, { name, avatar, notice });
+    res.json(group);
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
+}
+
+export async function updateMyGroupProfile(req: Request, res: Response) {
+  const { alias, remark } = req.body;
+  try {
+    const member = await groupService.updateMyGroupProfile(req.params.id, req.userId, { alias, remark });
+    res.json(member);
   } catch (e: any) {
     res.status(400).json({ error: e.message });
   }
@@ -54,6 +86,45 @@ export async function removeMember(req: Request, res: Response) {
   try {
     await groupService.removeMember(req.params.id, req.userId, targetUserId);
     res.json({ message: '已移出群组' });
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
+}
+
+export async function updateMemberRole(req: Request, res: Response) {
+  const { role } = req.body;
+  try {
+    const member = await groupService.updateMemberRole(req.params.id, req.userId, req.params.userId, role);
+    res.json(member);
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
+}
+
+export async function transferOwner(req: Request, res: Response) {
+  const { targetUserId } = req.body;
+  if (!targetUserId) return res.status(400).json({ error: 'targetUserId 为必填' });
+  try {
+    const group = await groupService.transferOwner(req.params.id, req.userId, targetUserId);
+    res.json(group);
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
+}
+
+export async function leaveGroup(req: Request, res: Response) {
+  try {
+    await groupService.leaveGroup(req.params.id, req.userId);
+    res.json({ message: '已退出群聊' });
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
+}
+
+export async function dismissGroup(req: Request, res: Response) {
+  try {
+    await groupService.dismissGroup(req.params.id, req.userId);
+    res.json({ message: '群聊已解散' });
   } catch (e: any) {
     res.status(400).json({ error: e.message });
   }

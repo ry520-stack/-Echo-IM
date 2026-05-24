@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { assetUrl } from '../utils/assetUrl';
 
 interface NotificationData {
   senderName: string;
@@ -43,7 +44,7 @@ export default function NotificationBanner({ isVisible, notification, onClose, o
           >
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary-500 text-sm font-bold text-white shadow-sm">
               {notification.avatar
-                ? <img src={notification.avatar} alt="" className="h-full w-full rounded-full object-cover" />
+                ? <img src={assetUrl(notification.avatar)} alt="" className="h-full w-full rounded-full object-cover" />
                 : notification.senderName[0]?.toUpperCase()}
             </div>
             <div className="flex-1 overflow-hidden">

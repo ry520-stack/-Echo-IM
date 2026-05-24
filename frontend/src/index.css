@@ -36,6 +36,36 @@ html, body, #root {
   background: #4b5563;
 }
 
+/* 禁止浏览器原生长按菜单（图片/视频/表情） */
+img, video, [style*="background-image"] {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  pointer-events: auto;
+}
+
+.app-no-callout,
+.app-no-callout * {
+  -webkit-touch-callout: none !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+
+.message-media,
+.message-media * {
+  -webkit-touch-callout: none !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+  touch-action: manipulation;
+}
+
+.message-media img,
+.message-media video {
+  -webkit-user-drag: none;
+  user-drag: none;
+}
+
 /* Message bubble animation */
 @keyframes msgIn {
   from { opacity: 0; transform: translateY(8px); }

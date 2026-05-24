@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { useToast } from '../contexts/ToastContext';
 import { useBackground } from '../hooks/useBackground';
@@ -22,6 +22,7 @@ interface FriendGroup {
 
 export default function ChatSettingsPage() {
   const { userId } = useParams();
+  const [searchParams] = useSearchParams();
   const nav = useNavigate();
   const toast = useToast();
   const [peer, setPeer] = useState<Peer | null>(null);
@@ -33,6 +34,8 @@ export default function ChatSettingsPage() {
   const currentBgUrl = peer ? getChatBg(peer.id) : '';
   const [groups, setGroups] = useState<FriendGroup[]>([]);
   const [groupMembership, setGroupMembership] = useState<Set<string>>(new Set());
+  const backToOrbit = searchParams.get('from') === 'orbit';
+  const [realMetAt, setRealMetAt] = useState('');
 
   useEffect(() => {
     if (!userId) return;
@@ -56,6 +59,13 @@ export default function ChatSettingsPage() {
       })
       .catch(() => {});
   }, [userId, peer]);
+
+  useEffect(() => {
+    if (!peer) return;
+    api<any>('GET', `/api/friends/relationship/${peer.id}`)
+      .then(summary => setRealMetAt(summary.realMetAt ? summary.realMetAt.slice(0, 10) : ''))
+      .catch(() => {});
+  }, [peer]);
 
   const saveAlias = async () => {
     if (!peer) return;
@@ -81,12 +91,22 @@ export default function ChatSettingsPage() {
     } catch (e: any) { toast(e.message || '操作失败', 'error'); }
   };
 
+  const saveRealMetAt = async () => {
+    if (!peer) return;
+    try {
+      await api('PATCH', `/api/friends/relationship/${peer.id}`, { realMetAt: realMetAt || null });
+      toast('现实相识时间已保存', 'success');
+    } catch (e: any) {
+      toast(e.message || '保存失败', 'error');
+    }
+  };
+
   if (!peer) return <div className="flex h-full items-center justify-center text-gray-400">加载中...</div>;
 
   return (
     <div className="flex h-full overflow-y-auto flex-col bg-gray-50 dark:bg-gray-950">
       <header className="flex items-center gap-3 border-b border-gray-200 bg-white px-4 py-3 dark:border-gray-700 dark:bg-gray-900">
-        <button onClick={() => nav(-1)} className="text-sm text-primary-500">← 返回</button>
+        <button onClick={() => { if (backToOrbit) nav(`/chat/${userId}?orbit=1`); else nav(-1); }} className="text-sm text-primary-500">← 返回</button>
         <h1 className="text-lg font-bold text-gray-900 dark:text-gray-100">好友设置</h1>
       </header>
       <div className="p-4 space-y-4">
@@ -103,6 +123,16 @@ export default function ChatSettingsPage() {
           <label className="text-sm text-gray-600 dark:text-gray-400">设置备注</label>
           <input value={alias} onChange={e => setAlias(e.target.value)} className="w-full rounded-xl bg-gray-50 dark:bg-gray-800 px-4 py-2.5 text-sm" placeholder="输入备注..." />
           <button onClick={saveAlias} disabled={saving} className="w-full rounded-xl bg-primary-500 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{saving ? '保存中...' : '保存备注'}</button>
+        </div>
+        <div className="rounded-2xl bg-white dark:bg-gray-900 p-4 space-y-3">
+          <label className="text-sm text-gray-600 dark:text-gray-400">现实相识时间</label>
+          <input
+            type="date"
+            value={realMetAt}
+            onChange={e => setRealMetAt(e.target.value)}
+            className="w-full rounded-xl bg-gray-50 px-4 py-2.5 text-sm dark:bg-gray-800 dark:text-gray-100"
+          />
+          <button onClick={saveRealMetAt} className="w-full rounded-xl bg-gray-100 py-2.5 text-sm font-semibold text-gray-700 dark:bg-gray-800 dark:text-gray-200">保存现实相识时间</button>
         </div>
         <div className="rounded-2xl bg-white dark:bg-gray-900 p-4 space-y-3">
           <label className="text-sm text-gray-600 dark:text-gray-400">聊天背景</label>

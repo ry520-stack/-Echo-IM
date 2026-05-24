@@ -17,6 +17,7 @@ import FavoritesPage from './pages/FavoritesPage';
 import TimeCapsulePage from './pages/TimeCapsulePage';
 import ChatSettingsPage from './pages/ChatSettingsPage';
 import StarZoneManagePage from './pages/StarZoneManagePage';
+import EchoRankingsPage from './pages/EchoRankingsPage';
 import NotificationProvider from './components/NotificationProvider';
 import { CallProvider } from './contexts/CallContext';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
@@ -81,6 +82,7 @@ export default function App() {
                   <Route path="/orbit/:userId" element={<MomentsPage />} />
                   <Route path="/chat/:userId/settings" element={<ChatSettingsPage />} />
                   <Route path="/star-zones" element={<StarZoneManagePage />} />
+                  <Route path="/echo-rankings" element={<EchoRankingsPage />} />
                 </Route>
 
                 <Route path="*" element={<Navigate to="/" replace />} />

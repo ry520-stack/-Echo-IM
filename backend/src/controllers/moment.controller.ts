@@ -3,8 +3,9 @@ import * as momentService from '../services/moment.service';
 
 export async function getMoments(req: Request, res: Response) {
   const page = parseInt(req.query.page as string) || 1;
+  const targetUserId = req.query.userId as string | undefined;
   try {
-    const data = await momentService.getMoments(req.userId, page);
+    const data = await momentService.getMoments(req.userId, page, 20, targetUserId);
     res.json(data);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -12,10 +13,27 @@ export async function getMoments(req: Request, res: Response) {
 }
 
 export async function createMoment(req: Request, res: Response) {
-  const { content, images } = req.body;
-  if (!content?.trim() && (!images || images.length === 0)) return res.status(400).json({ error: '内容或图片不能同时为空' });
+  const { content, images, privacyType, targetGroupIds, hiddenUserIds, visibleUserIds, galleryMode, coverIndex } = req.body;
+  const contentText = typeof content === 'string' ? content.trim() : '';
+  const imageList = Array.isArray(images) ? images : [];
+  if (imageList.length > 18) return res.status(400).json({ error: '动态图片最多 18 张' });
+  if (!contentText && imageList.length === 0) return res.status(400).json({ error: '内容或图片不能同时为空' });
+
+  const validTypes = ['PUBLIC', 'PRIVATE', 'VISIBLE_TO', 'INVISIBLE_TO'];
+  const finalType = validTypes.includes(privacyType) ? privacyType : 'PUBLIC';
+
   try {
-    const moment = await momentService.createMoment(req.userId, content.trim(), images);
+    const moment = await momentService.createMoment(
+      req.userId,
+      contentText,
+      imageList,
+      finalType,
+      Array.isArray(targetGroupIds) ? targetGroupIds : [],
+      Array.isArray(hiddenUserIds) ? hiddenUserIds : [],
+      Array.isArray(visibleUserIds) ? visibleUserIds : [],
+      galleryMode,
+      Number.isInteger(coverIndex) ? coverIndex : parseInt(coverIndex, 10) || 0,
+    );
     res.status(201).json(moment);
   } catch (e: any) {
     res.status(400).json({ error: e.message });

@@ -18,20 +18,32 @@ export function useNotification() {
   const [isVisible, setIsVisible] = useState(false);
   const [permission, setPermission] = useState<NotificationPermission>('default');
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const pathnameRef = useRef(location.pathname);
+
+  // 用 ref 跟踪 pathname，避免闭包捕获旧路由
+  useEffect(() => {
+    pathnameRef.current = location.pathname;
+  }, [location.pathname]);
 
   useEffect(() => {
     setPermission(Notification.permission);
   }, []);
 
   const requestPermission = useCallback(async () => {
-    const result = await Notification.requestPermission();
-    setPermission(result);
-    return result;
+    try {
+      const result = await Notification.requestPermission();
+      setPermission(result);
+      return result;
+    } catch {
+      return 'denied' as NotificationPermission;
+    }
   }, []);
 
   const playSound = useCallback(() => {
     try {
       if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
+      if (audioCtxRef.current.state === 'suspended') audioCtxRef.current.resume();
+
       const ctx = audioCtxRef.current;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -39,30 +51,50 @@ export function useNotification() {
       gain.connect(ctx.destination);
       osc.frequency.setValueAtTime(800, ctx.currentTime);
       osc.frequency.exponentialRampToValueAtTime(400, ctx.currentTime + 0.15);
-      gain.gain.setValueAtTime(0.3, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
+      gain.gain.setValueAtTime(0, ctx.currentTime);
+      gain.gain.linearRampToValueAtTime(0.2, ctx.currentTime + 0.05);
+      gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.15);
       osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.2);
+      osc.stop(ctx.currentTime + 0.15);
+
+      // 节点使用完毕后 disconnect，防止内存泄漏
+      osc.onended = () => { osc.disconnect(); gain.disconnect(); };
     } catch { /* autoplay blocked */ }
   }, []);
 
+  // 组件卸载时释放 AudioContext
+  useEffect(() => {
+    return () => {
+      if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
+        audioCtxRef.current.close().catch(() => {});
+      }
+    };
+  }, []);
+
   const showNotification = useCallback((data: NotificationData) => {
-    // Skip if currently viewing that chat
-    const match = location.pathname.match(/\/chat\/(\d+)/);
-    const currentChatId = match?.[1];
-    if (currentChatId && String(data.chatId) === currentChatId) return;
+    const activePeerIds = (localStorage.getItem('echo-active-chat-peer') || '').split(',').filter(Boolean);
+    if (activePeerIds.includes(String(data.chatId))) return;
 
     setNotification(data);
     setIsVisible(true);
     playSound();
 
-    // Background system notification
     if (document.visibilityState === 'hidden' && permission === 'granted') {
       try {
-        new Notification(data.senderName, { body: data.messagePreview, icon: '/favicon.svg', tag: data.chatId });
+        const notification = new Notification(data.senderName, {
+          body: data.messagePreview,
+          icon: './favicon.svg',
+          tag: data.chatId,
+          data: { url: `#/chat/${data.chatId}` },
+        });
+        notification.onclick = () => {
+          window.focus();
+          window.location.hash = `#/chat/${data.chatId}`;
+          notification.close();
+        };
       } catch { /* */ }
     }
-  }, [permission, playSound, location.pathname]);
+  }, [permission, playSound]);
 
   const hideNotification = useCallback(() => {
     setIsVisible(false);
@@ -73,9 +105,9 @@ export function useNotification() {
     if (!socket) return;
     const handler = (msg: any) => {
       if (!msg.senderId || !msg.content) return;
-      if (msg.senderId === user?.id) return; // skip self messages
+      if (msg.senderId === user?.id) return;
       const preview = msg.type === 'image' ? '[图片]' : msg.type === 'voice' ? '[语音]' : msg.content.slice(0, 40);
-      const peerId = msg.receiverId || msg.senderId;
+      const peerId = msg.sender?.digitalId ? String(msg.sender.digitalId) : msg.senderId;
       showNotification({
         senderName: msg.sender?.nickname || msg.sender?.username || '新消息',
         messagePreview: preview,

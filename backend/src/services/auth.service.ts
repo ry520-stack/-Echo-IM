@@ -6,6 +6,9 @@ const SECRET = process.env.JWT_SECRET;
 const EXPIRES = process.env.JWT_EXPIRES_IN || '7d';
 
 if (!SECRET) {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('FATAL: 生产环境必须配置 JWT_SECRET 环境变量');
+  }
   console.warn('[auth] 未设置 JWT_SECRET 环境变量，使用不安全的临时密钥。请在生产环境中设置 JWT_SECRET。');
 }
 
@@ -47,7 +50,7 @@ export async function register(username: string, email: string, password: string
   });
 
   const token = signToken({ userId: user.id });
-  return { token, user: { id: user.id, username: user.username, email: user.email, digitalId: user.digitalId, nickname: user.nickname, avatar: user.avatar, status: user.status, lastSeenAt: user.lastSeenAt } };
+  return { token, user: { id: user.id, username: user.username, email: user.email, digitalId: user.digitalId, nickname: user.nickname, avatar: user.avatar, status: user.status, lastSeenAt: user.lastSeenAt, bgConversation: user.bgConversation, bgGravity: user.bgGravity, bgChat: user.bgChat } };
 }
 
 export async function login(email: string, password: string) {
@@ -58,7 +61,7 @@ export async function login(email: string, password: string) {
   if (!valid) throw new Error('密码错误');
 
   const token = signToken({ userId: user.id });
-  return { token, user: { id: user.id, username: user.username, email: user.email, digitalId: user.digitalId, nickname: user.nickname, avatar: user.avatar, status: user.status, lastSeenAt: user.lastSeenAt } };
+  return { token, user: { id: user.id, username: user.username, email: user.email, digitalId: user.digitalId, nickname: user.nickname, avatar: user.avatar, status: user.status, lastSeenAt: user.lastSeenAt, bgConversation: user.bgConversation, bgGravity: user.bgGravity, bgChat: user.bgChat } };
 }
 
 export async function resetPassword(email: string, code: string, newPassword: string) {

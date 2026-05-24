@@ -10,14 +10,19 @@ import {
   getQueue,
   initOfflineListeners,
 } from './offlineSync';
+import { is5Plus } from '../utils/env';
 
 const TOKEN_KEY = 'echo-token';
 const SERVER_URL_KEY = 'echo-server-url';
+const DEFAULT_APP_SERVER_URL = 'http://8.140.194.214:8080';
 
 function getBaseUrl(): string {
   const manual = localStorage.getItem(SERVER_URL_KEY);
   if (manual) return manual;
-  return (import.meta as any).env?.VITE_API_BASE || '';
+  const envBase = (import.meta as any).env?.VITE_API_BASE || '';
+  if (envBase) return envBase;
+  if (is5Plus() || window.location.protocol === 'file:') return DEFAULT_APP_SERVER_URL;
+  return '';
 }
 
 export function getServerUrl(): string {
@@ -80,7 +85,7 @@ export async function api<T>(method: string, path: string, body?: unknown): Prom
 
     if (res.status === 401) {
       clearAuth();
-      window.location.href = '/login';
+      window.location.hash = '#/login';
       throw new Error('登录已过期，请重新登录');
     }
 
@@ -122,7 +127,7 @@ export async function api<T>(method: string, path: string, body?: unknown): Prom
       if (isGet && !isAuth) {
         const cached = readCache(path);
         if (cached) return cached.data as T;
-        return (Array.isArray((window as any).__emptyArray) ? [] : []) as T;
+        return [] as unknown as T;
       }
 
       if (!isGet) {

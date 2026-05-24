@@ -20,22 +20,25 @@ export async function updateUser(
 }
 
 export async function searchUsers(query: string) {
-  // 支持按 digitalId 精确匹配 或 username 模糊搜索
   const isNumber = /^\d{6}$/.test(query);
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(query);
   const users = await prisma.user.findMany({
     where: isNumber
       ? { digitalId: parseInt(query) }
-      : {
-          OR: [
-            { username: { contains: query } },
-            { email: { contains: query } },
-          ],
-        },
+      : isUuid
+        ? { id: query }
+        : {
+            OR: [
+              { username: { contains: query } },
+              { nickname: { contains: query } },
+            ],
+          },
     take: 10,
     select: {
-      id: true, username: true, email: true, digitalId: true,
+      id: true, username: true, digitalId: true,
       nickname: true, avatar: true, status: true, lastSeenAt: true,
       autoReply: true, allowStrangerMessage: true, readReceiptsEnabled: true,
+      bgConversation: true, bgGravity: true, bgChat: true,
     },
   });
   return users;

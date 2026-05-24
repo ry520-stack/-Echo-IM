@@ -55,8 +55,12 @@ model Friend {
   status    String    @default("pending")
   isPinned  Boolean   @default(false)
   chatBackground String @default("")
+  chatBackgroundUser String @default("")
+  chatBackgroundFriend String @default("")
   muted     Boolean   @default(false)
   hidden    Boolean   @default(false)
+  displayGroupId String?
+  realMetAt DateTime?
   deletedBy String?
   deletedAt DateTime?
   blockedBy String?
@@ -74,6 +78,8 @@ model Friend {
 model GroupChat {
   id        String   @id @default(uuid())
   name      String
+  avatar    String?
+  notice    String?
   creatorId String
   createdAt DateTime @default(now())
 
@@ -87,6 +93,8 @@ model GroupMember {
   groupId  String
   userId   String
   role     String   @default("member")
+  alias    String?
+  remark   String?
   joinedAt DateTime @default(now())
 
   group GroupChat @relation(fields: [groupId], references: [id], onDelete: Cascade)
@@ -153,6 +161,8 @@ model Moment {
   content      String
   images       String             @default("[]")
   privacyType  String             @default("PUBLIC")
+  galleryMode  String             @default("stack")
+  coverIndex   Int                @default(0)
   createdAt    DateTime           @default(now())
 
   user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -168,6 +178,7 @@ model MomentPermission {
   momentId String
   groupId  String?
   userId   String?
+  mode     String        @default("ALLOW")
 
   moment   Moment        @relation(fields: [momentId], references: [id], onDelete: Cascade)
   group    FriendGroup?  @relation(fields: [groupId], references: [id], onDelete: Cascade)

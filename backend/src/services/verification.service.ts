@@ -3,11 +3,11 @@ import prisma from '../utils/prisma';
 import { sendVerificationCode } from './email.service';
 
 function generateCode(): string {
-  return String(Math.floor(100000 + Math.random() * 900000));
+  return String(crypto.randomInt(100000, 999999));
 }
 
 function randomInt(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+  return crypto.randomInt(min, max + 1);
 }
 
 export async function generateCaptcha(): Promise<{ key: string; question: string }> {

@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 
 export default function VoiceBubble({ src }: { src: string }) {
   const [playing, setPlaying] = useState(false);
@@ -7,19 +7,40 @@ export default function VoiceBubble({ src }: { src: string }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // 全局互斥：监听其他语音气泡的播放事件，收到时暂停自己
+  useEffect(() => {
+    const handleGlobalPlay = (e: any) => {
+      if (e.detail.src !== src && playing) {
+        audioRef.current?.pause();
+        setPlaying(false);
+        if (intervalRef.current) clearInterval(intervalRef.current);
+      }
+    };
+    window.addEventListener('voice-play', handleGlobalPlay);
+    return () => window.removeEventListener('voice-play', handleGlobalPlay);
+  }, [src, playing]);
+
+  // 卸载清理：停止 interval 和音频播放
+  useEffect(() => {
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      audioRef.current?.pause();
+    };
+  }, []);
+
   const toggle = () => {
     const audio = audioRef.current;
     if (!audio) return;
     if (playing) {
       audio.pause();
-      if (intervalRef.current) clearInterval(intervalRef.current);
       setPlaying(false);
+      if (intervalRef.current) clearInterval(intervalRef.current);
     } else {
+      // 派发全局事件，通知其他气泡闭嘴
+      window.dispatchEvent(new CustomEvent('voice-play', { detail: { src } }));
       audio.play().catch(() => {});
       setPlaying(true);
-      intervalRef.current = setInterval(() => {
-        setCurrent(audio.currentTime);
-      }, 100);
+      intervalRef.current = setInterval(() => setCurrent(audio.currentTime), 100);
     }
   };
 
@@ -41,7 +62,21 @@ export default function VoiceBubble({ src }: { src: string }) {
         ref={audioRef}
         src={src}
         preload="metadata"
-        onLoadedMetadata={() => setDuration(audioRef.current?.duration || 0)}
+        onLoadedMetadata={() => {
+          const audio = audioRef.current;
+          if (!audio) return;
+          if (audio.duration === Infinity || isNaN(audio.duration)) {
+            audio.currentTime = 1e101;
+            const handleTimeUpdate = () => {
+              audio.removeEventListener('timeupdate', handleTimeUpdate);
+              audio.currentTime = 0;
+              setDuration(audio.duration);
+            };
+            audio.addEventListener('timeupdate', handleTimeUpdate);
+          } else {
+            setDuration(audio.duration);
+          }
+        }}
         onEnded={onEnded}
         className="hidden"
       />

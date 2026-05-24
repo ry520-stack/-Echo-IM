@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Mic } from 'lucide-react';
 
@@ -11,6 +11,12 @@ interface Props {
 
 export default function FluidVoiceInput({ onStartRecord, onStopRecord }: Props) {
   const [status, setStatus] = useState<VoiceStatus>('idle');
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 卸载清理
+  useEffect(() => {
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+  }, []);
 
   const handlePointerDown = (e: React.PointerEvent) => {
     e.preventDefault();
@@ -24,7 +30,8 @@ export default function FluidVoiceInput({ onStartRecord, onStopRecord }: Props) 
     e.currentTarget.releasePointerCapture(e.pointerId);
     setStatus('sending');
     onStopRecord();
-    setTimeout(() => setStatus('idle'), 800);
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setStatus('idle'), 800);
   };
 
   return (

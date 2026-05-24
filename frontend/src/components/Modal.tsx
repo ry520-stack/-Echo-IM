@@ -25,16 +25,16 @@ export default function Modal({ open, onClose, title, children, actions }: Props
     <div className="fixed inset-0 z-[9998] flex items-center justify-center p-4">
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/50 backdrop-blur-md transition-opacity"
+        className="absolute inset-0 bg-black/35 backdrop-blur-sm transition-opacity"
         onClick={onClose}
       />
 
       {/* Card */}
-      <div className="relative w-full max-w-sm rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl animate-[modalIn_0.2s_ease-out]">
+      <div className="relative w-full max-w-sm rounded-2xl border border-gray-100 bg-white p-5 shadow-2xl animate-[modalIn_0.2s_ease-out] dark:border-gray-800 dark:bg-gray-900">
         {title && (
-          <h3 className="mb-4 text-base font-semibold text-white">{title}</h3>
+          <h3 className="mb-3 text-base font-semibold text-gray-900 dark:text-white">{title}</h3>
         )}
-        <div className="text-sm text-slate-300">{children}</div>
+        <div className="text-sm leading-6 text-gray-500 dark:text-gray-300">{children}</div>
         {actions && (
           <div className="mt-5 flex justify-end gap-3">
             {actions}

@@ -19,3 +19,12 @@ export async function deleteEmoji(id: string, userId: string) {
   if (emoji.userId !== userId) throw new Error('无权删除');
   return prisma.emoji.delete({ where: { id } });
 }
+
+export async function batchDeleteEmojis(ids: string[], userId: string) {
+  return prisma.emoji.deleteMany({
+    where: {
+      id: { in: ids },
+      userId, // 只删除自己的表情
+    },
+  });
+}

@@ -9,6 +9,9 @@ import { compressImage } from '../utils/compressImage';
 import FloatingStackGallery from '../components/FloatingStackGallery';
 import PaginatedGridGallery from '../components/PaginatedGridGallery';
 import StarZoneSelector, { type PrivacyType } from '../components/StarZoneSelector';
+import Modal from '../components/Modal';
+
+const MAX_MOMENT_IMAGES = 18;
 
 interface MomentUser {
   id: string;
@@ -22,6 +25,8 @@ interface MomentData {
   userId: string;
   content: string;
   images: string;
+  galleryMode?: 'stack' | 'grid';
+  coverIndex?: number;
   createdAt: string;
   user: MomentUser;
   likes: { userId: string }[];
@@ -34,52 +39,6 @@ interface CommentData {
   content: string;
   createdAt: string;
   user: MomentUser;
-}
-
-type Privacy = 'public' | 'private' | 'friends';
-
-function ImageStack({ images, onPreview }: { images: string[]; onPreview: (url: string) => void }) {
-  const [showAll, setShowAll] = useState(false);
-
-  if (images.length === 1) {
-    return (
-      <div className="mt-2">
-        <img src={images[0]} alt="" className="rounded-xl object-cover w-full max-h-72 cursor-pointer" loading="lazy" onClick={() => onPreview(images[0])} />
-      </div>
-    );
-  }
-
-  // Show 3D card stack by default, expand on tap
-  if (!showAll) {
-    return (
-      <div className="mt-2 relative cursor-pointer" onClick={() => setShowAll(true)} style={{ height: '200px' }}>
-        {/* Back layer — image 3 */}
-        {images.length > 2 && (
-          <img src={images[2]} alt="" className="absolute top-0 left-0 w-full h-full rounded-xl object-cover z-0 scale-90 opacity-50 blur-[2px]" style={{ transform: 'translateX(16px) translateY(16px)' }} loading="lazy" />
-        )}
-        {/* Middle layer — image 2 */}
-        {images.length > 1 && (
-          <img src={images[1]} alt="" className="absolute top-0 left-0 w-full h-full rounded-xl object-cover z-10 scale-95 opacity-80 blur-[1px]" style={{ transform: 'translateX(8px) translateY(8px)' }} loading="lazy" />
-        )}
-        {/* Front layer — image 1 */}
-        <img src={images[0]} alt="" className="absolute top-0 left-0 w-full h-full rounded-xl object-cover z-20 shadow-md" loading="lazy" />
-        {/* Count badge */}
-        <div className="absolute top-2 right-2 z-30 bg-black/60 text-white text-xs px-2 py-0.5 rounded-full">{images.length} 张</div>
-      </div>
-    );
-  }
-
-  // Expanded grid view
-  return (
-    <div className="mt-2">
-      <div className={`grid gap-1 ${images.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
-        {images.map((img, i) => (
-          <img key={i} src={img} alt="" className="rounded-xl object-cover w-full aspect-square cursor-pointer hover:opacity-90 transition-opacity" loading="lazy" onClick={() => onPreview(img)} />
-        ))}
-      </div>
-      <button onClick={() => setShowAll(false)} className="mt-2 text-xs text-primary-500 w-full text-center">收起</button>
-    </div>
-  );
 }
 
 export default function MomentsPage() {
@@ -102,8 +61,10 @@ export default function MomentsPage() {
   const [uploading, setUploading] = useState(false);
   const uploadingCount = useRef(0);
   const [posting, setPosting] = useState(false);
+  const [showDraftConfirm, setShowDraftConfirm] = useState(false);
   const [privacy, setPrivacy] = useState<PrivacyType>('PUBLIC');
   const [privacyGroups, setPrivacyGroups] = useState<string[]>([]);
+  const [hiddenUserIds, setHiddenUserIds] = useState<string[]>([]);
   const [scheduleTime, setScheduleTime] = useState('');
   const [showStarZoneSelector, setShowStarZoneSelector] = useState(false);
   // Per-moment gallery mode + cover index
@@ -173,8 +134,43 @@ export default function MomentsPage() {
     setUploadedImages(prev => prev.filter((_, j) => j !== i));
   };
 
+  const resetComposer = () => {
+    setShowComposer(false);
+    setShowDraftConfirm(false);
+    setNewContent('');
+    setUploadedImages([]);
+    setCoverIndex(0);
+    setPrivacy('PUBLIC');
+    setPrivacyGroups([]);
+    setHiddenUserIds([]);
+    setScheduleTime('');
+    setComposerMode('stack');
+  };
+
+  const closeComposer = () => {
+    if (newContent.trim() || uploadedImages.length > 0) {
+      setShowDraftConfirm(true);
+      return;
+    }
+    resetComposer();
+  };
+
+  const saveDraftAndClose = () => {
+    localStorage.setItem('echo-draft', JSON.stringify({
+      content: newContent,
+      images: uploadedImages,
+      privacy,
+      scheduleTime,
+    }));
+    resetComposer();
+  };
+
   const postMoment = async () => {
     if (!newContent.trim() && uploadedImages.length === 0) return;
+    if (scheduleTime) {
+      toast('动态定时发布还需要后端队列，暂时先不要选择定时时间', 'error');
+      return;
+    }
     setPosting(true);
     try {
       const result = await api<{ id: string }>('POST', '/api/moments', {
@@ -182,6 +178,9 @@ export default function MomentsPage() {
         images: uploadedImages,
         privacyType: privacy,
         targetGroupIds: privacyGroups,
+        hiddenUserIds,
+        galleryMode: composerMode,
+        coverIndex,
         scheduledAt: scheduleTime || undefined,
       });
       if (result?.id) {
@@ -197,6 +196,7 @@ export default function MomentsPage() {
       setCoverIndex(0);
       setPrivacy('PUBLIC');
       setPrivacyGroups([]);
+      setHiddenUserIds([]);
       setScheduleTime('');
       setComposerMode('stack');
       setShowComposer(false);
@@ -296,7 +296,7 @@ export default function MomentsPage() {
                     <div className="px-4 pb-1">
                       <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words">{moment.content}</p>
                       {imgs.length > 0 && (
-                        (galleryModes[moment.id] || 'stack') === 'stack'
+                        (moment.galleryMode || galleryModes[moment.id] || 'stack') === 'stack'
                           ? <FloatingStackGallery images={imgs} onPreview={(url, i) => setLightbox({ images: imgs, index: i })} />
                           : imgs.length === 1 ? (
                             <img src={imgs[0]} alt="" className="rounded-xl object-cover w-full max-h-64 cursor-pointer" onClick={() => setLightbox({ images: imgs, index: 0 })} />
@@ -306,7 +306,7 @@ export default function MomentsPage() {
                             </motion.div>
                           ) : (
                             <div className="relative cursor-pointer" onClick={() => setExpandedGrids(prev => new Set([...prev, moment.id]))}>
-                              <img src={imgs[coverIndices[moment.id] || 0] || imgs[0]} alt="" className="rounded-xl object-cover w-full max-h-72 shadow-lg" />
+                              <img src={imgs[moment.coverIndex ?? coverIndices[moment.id] ?? 0] || imgs[0]} alt="" className="rounded-xl object-cover w-full max-h-72 shadow-lg" />
                               <div className="absolute top-2 right-2 bg-black/50 backdrop-blur-sm text-white/90 text-base w-8 h-8 rounded-full flex items-center justify-center">
                                 ⊞
                               </div>
@@ -374,14 +374,7 @@ export default function MomentsPage() {
             </div>
           )}
           <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-700 shrink-0" onClick={(e) => e.stopPropagation()}>
-            <button onClick={() => {
-              if (newContent.trim() || uploadedImages.length > 0) {
-                if (confirm('是否保留草稿？')) {
-                  localStorage.setItem('echo-draft', JSON.stringify({ content: newContent, images: uploadedImages, privacy, scheduleTime }));
-                }
-              }
-              setShowComposer(false); setNewContent(''); setUploadedImages([]);
-            }} className="text-sm text-gray-500">取消</button>
+            <button onClick={closeComposer} className="text-sm text-gray-500">取消</button>
             <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">发动态</h2>
             <button onClick={postMoment} disabled={posting || (!newContent.trim() && uploadedImages.length === 0)} className="rounded-lg bg-primary-500 px-4 py-1.5 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-50">
               {posting ? '...' : scheduleTime ? '定时发射' : '发布'}
@@ -400,9 +393,9 @@ export default function MomentsPage() {
 
             {/* Images — Framer Motion Reorder */}
             {uploadedImages.length > 0 && (
-              <Reorder.Group axis="x" values={uploadedImages} onReorder={setUploadedImages} className="mt-3 flex gap-2 overflow-x-auto pb-2">
+              <Reorder.Group axis="y" values={uploadedImages} onReorder={setUploadedImages} className="mt-3 grid grid-cols-3 gap-2">
                 {uploadedImages.map((url, i) => (
-                  <Reorder.Item key={url} value={url} className="relative shrink-0 w-24 h-24 cursor-grab active:cursor-grabbing" whileDrag={{ scale: 1.05, boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}>
+                  <Reorder.Item key={url} value={url} className="relative aspect-square w-full cursor-grab active:cursor-grabbing" whileDrag={{ scale: 1.05, boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}>
                     <img src={assetUrl(url)} alt="" className="w-full h-full rounded-xl object-cover" onError={(e) => { (e.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="%23f0f0f0" width="100" height="100"/><text x="50" y="55" text-anchor="middle" fill="%23999" font-size="12">🌌</text></svg>'; }} />
                     <button onClick={() => { removeImage(i); if (coverIndex >= uploadedImages.length - 1) setCoverIndex(0); }} className="absolute bottom-1 left-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/30 text-white/70 text-[10px] z-10 hover:bg-red-500/80 hover:text-white transition-colors">✕</button>
                     {i === coverIndex && <span className="absolute top-1 left-1 bg-primary-500 text-white text-[10px] px-1.5 py-0.5 rounded-full z-10">封面</span>}
@@ -414,10 +407,10 @@ export default function MomentsPage() {
               </Reorder.Group>
             )}
 
-            {uploadedImages.length < 9 && (
+            {uploadedImages.length < MAX_MOMENT_IMAGES && (
               <label className={`mt-3 flex items-center justify-center rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600 h-24 cursor-pointer hover:border-primary-400 transition-colors ${uploading ? 'opacity-50' : ''}`}>
                 <span className="text-sm text-gray-400">{uploading ? '上传中...' : '+ 添加图片'}</span>
-                <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => { const files = e.target.files; if (files) { for (let i = 0; i < Math.min(files.length, 9 - uploadedImages.length); i++) uploadImage(files[i]); } }} />
+                <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => { const files = e.target.files; if (files) { for (let i = 0; i < Math.min(files.length, MAX_MOMENT_IMAGES - uploadedImages.length); i++) uploadImage(files[i]); } }} />
               </label>
             )}
 
@@ -427,6 +420,7 @@ export default function MomentsPage() {
               <button type="button" onClick={() => setShowStarZoneSelector(true)}
                 className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gray-100 dark:bg-gray-800 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
                 {privacyLabel[privacy]}
+                {hiddenUserIds.length > 0 && <span className="text-red-500">排除 {hiddenUserIds.length} 人</span>}
                 {privacyGroups.length > 0 && <span className="text-primary-500">({privacyGroups.length}个组)</span>}
               </button>
             </div>
@@ -498,13 +492,38 @@ export default function MomentsPage() {
       <StarZoneSelector
         open={showStarZoneSelector}
         onClose={() => setShowStarZoneSelector(false)}
-        onManageGroups={() => nav('/friends')}
-        onConfirm={(type, groupIds) => {
+        onManageGroups={() => nav('/star-zones')}
+        onConfirm={(type, groupIds, excludedIds) => {
           setPrivacy(type);
           setPrivacyGroups(groupIds);
+          setHiddenUserIds(excludedIds);
           setShowStarZoneSelector(false);
         }}
       />
+
+      <Modal
+        open={showDraftConfirm}
+        onClose={() => setShowDraftConfirm(false)}
+        title="保留草稿？"
+        actions={
+          <>
+            <button
+              onClick={resetComposer}
+              className="rounded-xl px-4 py-2 text-sm text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
+            >
+              不保留
+            </button>
+            <button
+              onClick={saveDraftAndClose}
+              className="rounded-xl bg-primary-500 px-4 py-2 text-sm font-medium text-white hover:bg-primary-600"
+            >
+              保留草稿
+            </button>
+          </>
+        }
+      >
+        这次编辑还没有发布，是否保存为草稿？
+      </Modal>
     </div>
   );
 }

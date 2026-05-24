@@ -11,6 +11,7 @@ import { is5Plus } from '../utils/env';
 import { useBackground } from '../hooks/useBackground';
 import Modal from './Modal';
 import PersonalOrbitView from './PersonalOrbitView';
+import GroupOrbitView from './GroupOrbitView';
 import GooeySwipe from './GooeySwipe';
 import VoiceBubble from './VoiceBubble';
 import FluidInput from './FluidInput';
@@ -66,7 +67,9 @@ interface Props {
   peer: Peer | null;
   chatType: 'user' | 'group';
   groupName?: string;
+  groupAvatar?: string;
   onBack?: () => void;
+  initialOrbit?: boolean;
 }
 
 const ERROR_MAP: Record<string, string> = {
@@ -76,10 +79,11 @@ const ERROR_MAP: Record<string, string> = {
   '对方开启了好友验证，你还不是他（她）好友': '对方开启了好友验证，你还不是他（她）好友',
 };
 
-export default function ChatWindow({ peerId, peer, chatType, groupName, onBack }: Props) {
+export default function ChatWindow({ peerId, peer, chatType, groupName, groupAvatar, onBack, initialOrbit = false }: Props) {
   const { user } = useAuth();
   const { socket, connected, isUserOnline } = useSocket();
   const toast = useToast();
+  const isGroup = chatType === 'group';
   const { getBg, getChatBg, setChatBg: saveChatBg, uploadAndGetUrl } = useBackground();
   const { startCall } = useCall();
   const { startRecord, stopRecord, isRecording: recorderActive } = useAudioRecorder();
@@ -107,6 +111,7 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, onBack }
   const [selectedEmojis, setSelectedEmojis] = useState<Set<string>>(new Set());
   const emojisCachedRef = useRef(false);
   const [showPersonalOrbit, setShowPersonalOrbit] = useState(false);
+  const [showGroupOrbit, setShowGroupOrbit] = useState(false);
   const [inkDrops, setInkDrops] = useState<{ id: number; x: number }[]>([]);
   const dropCounter = useRef(0);
   const [msgContextMenu, setMsgContextMenu] = useState<{ msgId: string; x: number; y: number; isMine: boolean; createdAt: string; type?: string; content?: string } | null>(null);
@@ -166,6 +171,7 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, onBack }
   const [showShootMenu, setShowShootMenu] = useState(false);
   const [emojiPreview, setEmojiPreview] = useState<string | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const [groupAliases, setGroupAliases] = useState<Record<string, string>>({});
 
   const readReceiptKey = `echo-read-${peerId}`;
   const [readReceiptOn, setReadReceiptOn] = useState(() => {
@@ -177,6 +183,38 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, onBack }
   });
   const readReceiptRef = useRef(readReceiptOn);
   readReceiptRef.current = readReceiptOn;
+
+  useEffect(() => {
+    if (!initialOrbit || chatType === 'group' || !peer) return;
+    setShowPersonalOrbit(true);
+  }, [initialOrbit, chatType, peer]);
+
+  useEffect(() => {
+    if (!isGroup || !peerId) {
+      setGroupAliases({});
+      return;
+    }
+    api<any>('GET', `/api/groups/${peerId}`).then(group => {
+      const aliases: Record<string, string> = {};
+      (group.members || []).forEach((member: any) => {
+        aliases[member.userId] = member.alias || member.user?.nickname || member.user?.username || '';
+      });
+      setGroupAliases(aliases);
+    }).catch(() => setGroupAliases({}));
+  }, [isGroup, peerId]);
+
+  useEffect(() => {
+    if (chatType !== 'group' && peerId) {
+      const ids = [peerId, peer?.digitalId ? String(peer.digitalId) : ''].filter(Boolean);
+      localStorage.setItem('echo-active-chat-peer', ids.join(','));
+    }
+    return () => {
+      const activeIds = (localStorage.getItem('echo-active-chat-peer') || '').split(',');
+      if (activeIds.includes(peerId) || (peer?.digitalId && activeIds.includes(String(peer.digitalId)))) {
+        localStorage.removeItem('echo-active-chat-peer');
+      }
+    };
+  }, [chatType, peerId, peer?.digitalId]);
 
   const toggleReadReceipt = () => {
     const next = !readReceiptOn;
@@ -391,8 +429,6 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, onBack }
     }
   };
 
-  const isGroup = chatType === 'group';
-
   const fetchMessages = useCallback(async (before?: string) => {
     try {
       const endpoint = isGroup
@@ -428,7 +464,7 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, onBack }
     readyRef.current = false;
     fetchMessages();
     // Mark messages as read when opening chat
-    if (!isGroup && peerId && readReceiptRef.current) {
+    if (!isGroup && peerId) {
       api('PUT', '/api/messages/read', { peerId }).catch(() => {});
     }
   }, [peerId, fetchMessages, isGroup]);
@@ -460,6 +496,15 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, onBack }
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages.length]);
+
+  useEffect(() => {
+    const keepLatestVisible = () => {
+      window.setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }), 80);
+      window.setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' }), 260);
+    };
+    window.visualViewport?.addEventListener('resize', keepLatestVisible);
+    return () => window.visualViewport?.removeEventListener('resize', keepLatestVisible);
+  }, []);
 
 
   // Socket message handling
@@ -629,6 +674,8 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, onBack }
     if (!peer) return '';
     return peer.nickname || peer.username;
   };
+
+  const getSenderDisplayName = (msg: Message) => groupAliases[msg.senderId] || msg.sender.nickname || msg.sender.username;
 
   // Voice recording (via useAudioRecorder hook)
   const stopRecordingRef = useRef(false); // 防止重复 stop
@@ -812,8 +859,9 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, onBack }
     e.stopPropagation();
     if (dx > 50 && onBack) {
       onBack();
-    } else if (dx < -50 && !isGroup && peer) {
-      setShowPersonalOrbit(true);
+    } else if (dx < -50) {
+      if (isGroup) setShowGroupOrbit(true);
+      else if (peer) setShowPersonalOrbit(true);
     }
   };
 
@@ -895,12 +943,12 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, onBack }
         <div className={`flex h-9 w-9 items-center justify-center rounded-xl text-base font-bold text-white shrink-0 ${
           isGroup ? 'bg-emerald-500' : 'bg-primary-500'
         }`}>
-          {isGroup ? (groupName?.[0]?.toUpperCase() || 'G') : (
+          {isGroup ? (groupAvatar ? <img src={assetUrl(groupAvatar)} alt="" className="h-full w-full rounded-xl object-cover" /> : (groupName?.[0]?.toUpperCase() || 'G')) : (
             peer?.avatar ? <img src={assetUrl(peer.avatar)} alt="" className="h-full w-full rounded-xl object-cover" /> :
             getPeerName()[0]?.toUpperCase() || '?'
           )}
         </div>
-        <div className="flex-1 min-w-0 cursor-pointer" onClick={() => { if (!isGroup && peer) window.location.hash = `#/chat/${peer.digitalId}/settings`; }}>
+        <div className="flex-1 min-w-0">
           <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate">{getPeerName()}</h2>
           <p className="text-xs text-gray-400">
             {typingUser ? <span className="text-primary-500">正在输入...</span> :
@@ -976,19 +1024,19 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, onBack }
 
                     {!isMine && !msg.isRecalled && (
                       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary-100 text-xs font-bold text-primary-500 dark:bg-primary-900/30">
-                        {msg.sender.nickname?.[0] || msg.sender.username[0]?.toUpperCase() || '?'}
+                        {getSenderDisplayName(msg)[0]?.toUpperCase() || '?'}
                       </div>
                     )}
                     {!isMine && msg.isRecalled && (
                       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gray-300 text-xs font-bold text-gray-500 dark:bg-gray-700 grayscale opacity-50">
-                        {msg.sender.nickname?.[0] || msg.sender.username[0]?.toUpperCase() || '?'}
+                        {getSenderDisplayName(msg)[0]?.toUpperCase() || '?'}
                       </div>
                     )}
 
                     <div className="min-w-0">
                       {isGroup && !isMine && !msg.isRecalled && (
                         <p className="mb-0.5 text-[10px] text-primary-400 ml-1">
-                          {msg.sender.nickname || msg.sender.username}
+                          {getSenderDisplayName(msg)}
                         </p>
                       )}
 
@@ -1093,20 +1141,20 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, onBack }
 
       {activePanel === 'schedule' && (
         <div className="border-t border-gray-100 bg-gray-50 px-4 py-3 dark:border-gray-800 dark:bg-gray-900">
-          <div className="flex items-center gap-2">
+          <div className="grid grid-cols-2 gap-2">
             <span className="text-xs text-gray-500">定时发送:</span>
             <input
               type="datetime-local"
               value={scheduleTime}
               onChange={(e) => setScheduleTime(e.target.value)}
-              className="rounded-lg border border-gray-200 px-2 py-1 text-xs dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+              className="col-span-2 rounded-lg border border-gray-200 px-2 py-2 text-xs dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
             />
             <input
               type="text"
               value={scheduleContent}
               onChange={(e) => setScheduleContent(e.target.value)}
               placeholder="消息内容"
-              className="flex-1 rounded-lg border border-gray-200 px-2 py-1 text-xs dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+              className="col-span-2 rounded-lg border border-gray-200 px-2 py-2 text-xs dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
             />
             <button onClick={scheduleDelayed} className="rounded-lg bg-primary-500 px-2 py-1 text-xs text-white">确定</button>
             <button onClick={() => setActivePanel(null)} className="rounded-lg px-2 py-1 text-xs text-gray-400">取消</button>
@@ -1437,7 +1485,12 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, onBack }
               }
             }}
             rows={1}
-            onFocus={() => { setActivePanel(null); setShowShootMenu(false); }}
+            onFocus={() => {
+              setActivePanel(null);
+              setShowShootMenu(false);
+              window.setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }), 120);
+              window.setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' }), 320);
+            }}
             onInput={(e) => {
               const el = e.currentTarget;
               el.style.height = 'auto';
@@ -1557,6 +1610,13 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, onBack }
           peerName={getPeerName()}
           peer={peer}
           onClose={() => setShowPersonalOrbit(false)}
+        />
+      )}
+      {showGroupOrbit && isGroup && (
+        <GroupOrbitView
+          groupId={peerId}
+          groupName={groupName}
+          onClose={() => setShowGroupOrbit(false)}
         />
       )}
     </div>

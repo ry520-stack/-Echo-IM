@@ -1,11 +1,22 @@
 import { Request, Response } from 'express';
 import * as delayedService from '../services/delayed.service';
+import prisma from '../utils/prisma';
 
 export async function schedule(req: Request, res: Response) {
-  const { receiverId, groupId, content, type, sendAt } = req.body;
+  let { receiverId, groupId, content, type, sendAt } = req.body;
   if (!content?.trim()) return res.status(400).json({ error: '消息内容不能为空' });
   if (!sendAt) return res.status(400).json({ error: '发送时间为必填' });
-  if (!receiverId && !groupId) return res.status(400).json({ error: 'receiverId 或 groupId 为必填' });
+
+  // 留空 = 私密日记（发给自己）
+  if (!receiverId && !groupId) {
+    receiverId = req.userId;
+  }
+  // Echo ID (6位数字) → UUID
+  else if (receiverId && /^\d{6}$/.test(receiverId)) {
+    const targetUser = await prisma.user.findUnique({ where: { digitalId: parseInt(receiverId) } });
+    if (!targetUser) return res.status(404).json({ error: '接收人不存在' });
+    receiverId = targetUser.id;
+  }
 
   try {
     const dm = await delayedService.scheduleMessage(req.userId, {

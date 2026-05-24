@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useAuth } from './AuthContext';
+import { getServerUrl } from '../api/client';
 
 interface SocketValue {
   socket: Socket | null;
@@ -34,7 +35,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const base = localStorage.getItem('echo-server-url') || '';
+    const base = getServerUrl();
     const s = io(base || undefined, {
       auth: { token },
       transports: ['websocket', 'polling'],
@@ -55,6 +56,10 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         else next.delete(data.userId);
         return next;
       });
+    });
+
+    s.on('online:list', (data: { userIds: string[] }) => {
+      setOnlineUsers(new Set(data.userIds || []));
     });
 
     // Force online on message or typing events

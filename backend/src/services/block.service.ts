@@ -8,7 +8,26 @@ export async function blockUser(blockerId: string, blockedId: string) {
   });
   if (existing) throw new Error('已拉黑该用户');
 
-  return prisma.blockList.create({ data: { blockerId, blockedId } });
+  // 创建 blockList 记录
+  const block = await prisma.blockList.create({ data: { blockerId, blockedId } });
+
+  // 同步更新 Friend 关系为 blocked
+  await prisma.friend.updateMany({
+    where: {
+      OR: [
+        { userId: blockerId, friendId: blockedId },
+        { userId: blockedId, friendId: blockerId },
+      ],
+      status: { in: ['accepted', 'pending', 'deleted', 'rejected'] },
+    },
+    data: {
+      status: 'blocked',
+      blockedBy: blockerId,
+      blockedAt: new Date(),
+    },
+  });
+
+  return block;
 }
 
 export async function unblockUser(blockerId: string, blockedId: string) {
@@ -17,7 +36,27 @@ export async function unblockUser(blockerId: string, blockedId: string) {
   });
   if (!block) throw new Error('未拉黑该用户');
 
-  return prisma.blockList.delete({ where: { id: block.id } });
+  // 删除 blockList 记录
+  await prisma.blockList.delete({ where: { id: block.id } });
+
+  // 不自动恢复好友关系，改为 deleted
+  await prisma.friend.updateMany({
+    where: {
+      OR: [
+        { userId: blockerId, friendId: blockedId },
+        { userId: blockedId, friendId: blockerId },
+      ],
+      status: 'blocked',
+      blockedBy: blockerId,
+    },
+    data: {
+      status: 'deleted',
+      deletedBy: blockerId,
+      deletedAt: new Date(),
+      blockedBy: null,
+      blockedAt: null,
+    },
+  });
 }
 
 export async function getBlockedUsers(blockerId: string) {

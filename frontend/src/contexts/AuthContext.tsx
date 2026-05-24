@@ -19,6 +19,7 @@ interface AuthValue {
   login: (email: string, password: string) => Promise<void>;
   register: (username: string, email: string, password: string, code?: string) => Promise<void>;
   logout: () => void;
+  updateUser: (patch: Partial<User>) => void;
   ready: boolean;
 }
 
@@ -63,6 +64,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (saved.token) {
       setToken(saved.token);
       setUser(saved.user);
+      fetch(`${getApiBase()}/api/users/me`, {
+        headers: { 'Authorization': `Bearer ${saved.token}` },
+      })
+        .then(res => (res.ok ? res.json() : null))
+        .then(freshUser => {
+          if (!freshUser) return;
+          setUser(freshUser);
+          localStorage.setItem(USER_KEY, JSON.stringify(freshUser));
+        })
+        .catch(() => {});
     }
     setReady(true);
   }, []);
@@ -79,7 +90,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error('无法连接服务器，请检查后端是否已启动');
     }
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || '登录失败');
+    if (!res.ok || !data.token || !data.user) {
+      throw new Error(data.error || '登录失败，服务器返回数据异常');
+    }
 
     setToken(data.token);
     setUser(data.user);
@@ -119,8 +132,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearAuth();
   };
 
+  const updateUser = (patch: Partial<User>) => {
+    setUser(prev => {
+      if (!prev) return prev;
+      const next = { ...prev, ...patch };
+      localStorage.setItem(USER_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
+
   return (
-    <AuthContext.Provider value={{ user, token, login, register, logout, ready }}>
+    <AuthContext.Provider value={{ user, token, login, register, logout, updateUser, ready }}>
       {children}
     </AuthContext.Provider>
   );

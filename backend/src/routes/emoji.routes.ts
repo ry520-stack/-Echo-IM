@@ -7,6 +7,7 @@ const router = Router();
 router.use(authenticate);
 router.get('/', emojiController.getEmojis);
 router.post('/', emojiController.createEmoji);
+router.delete('/batch', emojiController.batchDeleteEmojis);
 router.delete('/:id', emojiController.deleteEmoji);
 
 export default router;

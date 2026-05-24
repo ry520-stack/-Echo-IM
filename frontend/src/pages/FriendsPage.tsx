@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSocket } from '../contexts/SocketContext';
 import { useToast } from '../contexts/ToastContext';
+import { useAuth } from '../contexts/AuthContext';
 import Modal from '../components/Modal';
 import { api } from '../api/client';
 
@@ -34,6 +35,7 @@ export default function FriendsPage() {
   const nav = useNavigate();
   const { socket } = useSocket();
   const toast = useToast();
+  const { user } = useAuth();
   const [friends, setFriends] = useState<Friend[]>([]);
   const [requests, setRequests] = useState<FriendRequest[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -76,11 +78,15 @@ export default function FriendsPage() {
   }, [socket]);
 
   const searchUsers = async () => {
-    if (!searchQuery.trim()) return;
+    const q = searchQuery.trim();
+    if (!q) {
+      setSearchResults([]);
+      return;
+    }
     setSearching(true);
     setError('');
     try {
-      const results = await api<Peer[]>('GET', `/api/users/search?q=${searchQuery}`);
+      const results = await api<Peer[]>('GET', `/api/users/search?q=${encodeURIComponent(q)}`);
       setSearchResults(results);
     } catch (e: any) {
       setError(e.message || '搜索失败');
@@ -157,12 +163,17 @@ export default function FriendsPage() {
     const q = addFriendInput.trim();
     if (!q) return;
     try {
-      const results = await api<Peer[]>('GET', `/api/users/search?q=${q}`);
-      if (results.length === 0) {
-        toast('未找到该用户', 'error');
+      const results = await api<Peer[]>('GET', `/api/users/search?q=${encodeURIComponent(q)}`);
+      const candidates = results.filter(p => p.id !== user?.id && !friends.some(f => f.peer.id === p.id));
+      const exact = /^\d{6}$/.test(q) ? candidates.find(p => String(p.digitalId) === q) : undefined;
+      const peer = exact || (candidates.length === 1 ? candidates[0] : null);
+      if (!peer) {
+        setSearchQuery(q);
+        setSearchResults(candidates);
+        setAddModalOpen(false);
+        toast(candidates.length > 1 ? '找到多个用户，请在搜索结果里选择添加' : '未找到该用户', candidates.length > 1 ? 'success' : 'error');
         return;
       }
-      const peer = results[0];
       const res = await api<{ status: string; message: string }>('POST', '/api/friends/request', { peerId: peer.id });
       toast(res.message || '好友申请已发送', 'success');
       setAddModalOpen(false);
@@ -226,25 +237,35 @@ export default function FriendsPage() {
         {searchResults.length > 0 && (
           <div className="mb-4 rounded-2xl border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-900">
             <p className="mb-2 text-xs text-gray-500">搜索结果</p>
-            {searchResults.map(peer => (
-              <div key={peer.id} className="flex items-center justify-between py-2 border-b border-gray-50 dark:border-gray-800 last:border-0">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-100 text-sm font-bold text-primary-600 dark:bg-primary-900/30">
-                    {getDisplayName(peer)[0]?.toUpperCase()}
+            {searchResults.map(peer => {
+              const isSelf = peer.id === user?.id;
+              const isAlreadyFriend = friends.some(f => f.peer.id === peer.id);
+              return (
+                <div key={peer.id} className="flex items-center justify-between py-2 border-b border-gray-50 dark:border-gray-800 last:border-0">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-100 text-sm font-bold text-primary-600 dark:bg-primary-900/30">
+                      {getDisplayName(peer)[0]?.toUpperCase()}
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{getDisplayName(peer)}</p>
+                      <p className="text-xs text-gray-400">ID: {peer.digitalId}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{getDisplayName(peer)}</p>
-                    <p className="text-xs text-gray-400">ID: {peer.digitalId}</p>
-                  </div>
+                  {isSelf ? (
+                    <span className="text-xs text-gray-400">你自己</span>
+                  ) : isAlreadyFriend ? (
+                    <span className="text-xs text-gray-400">已添加</span>
+                  ) : (
+                    <button
+                      onClick={() => sendRequest(peer.id)}
+                      className="rounded-lg bg-primary-50 px-3 py-1 text-xs font-medium text-primary-600 hover:bg-primary-100 dark:bg-primary-900/30 dark:text-primary-400"
+                    >
+                      添加
+                    </button>
+                  )}
                 </div>
-                <button
-                  onClick={() => sendRequest(peer.id)}
-                  className="rounded-lg bg-primary-50 px-3 py-1 text-xs font-medium text-primary-600 hover:bg-primary-100 dark:bg-primary-900/30 dark:text-primary-400"
-                >
-                  添加
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 

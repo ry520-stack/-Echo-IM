@@ -2,12 +2,15 @@ import prisma from '../utils/prisma';
 import * as socketService from './socket.service';
 
 let schedulerStarted = false;
+let isProcessing = false;
 
 export function startDelayedMessageScheduler() {
   if (schedulerStarted) return;
   schedulerStarted = true;
 
   setInterval(async () => {
+    if (isProcessing) return; // 上一波还没处理完，跳过
+    isProcessing = true;
     try {
       const now = new Date();
       const dueMessages = await prisma.delayedMessage.findMany({
@@ -43,14 +46,16 @@ export function startDelayedMessageScheduler() {
               io.to(`group:${delayed.groupId}`).emit('message:receive', msg);
             }
           }
-        } catch {
-          // skip failed messages
+        } catch (e) {
+          console.error(`[定时消息处理失败] 消息ID: ${delayed.id}`, e);
         }
       }
-    } catch {
-      // scheduler error — ignore
+    } catch (e) {
+      console.error('[定时消息调度器异常]', e);
+    } finally {
+      isProcessing = false;
     }
-  }, 3000); // check every 3 seconds
+  }, 3000);
 }
 
 export async function scheduleMessage(

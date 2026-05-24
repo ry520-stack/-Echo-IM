@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { useToast } from '../contexts/ToastContext';
 import { api, getServerUrl, setServerUrl } from '../api/client';
 import ToggleSwitch from '../components/ToggleSwitch';
-import { Camera, ChevronLeft, LogOut } from 'lucide-react';
+import { useBackground, type PageKey } from '../hooks/useBackground';
+import { Camera, ChevronLeft, LogOut, Image, RotateCcw } from 'lucide-react';
+import { assetUrl } from '../utils/assetUrl';
 
 interface BlockEntry {
   id: string;
@@ -14,7 +15,7 @@ interface BlockEntry {
 }
 
 export default function SettingsPage() {
-  const { user, token, logout } = useAuth();
+  const { user, token, logout, updateUser } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const toast = useToast();
   const nav = useNavigate();
@@ -29,9 +30,12 @@ export default function SettingsPage() {
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [blockedUsers, setBlockedUsers] = useState<BlockEntry[]>([]);
   const [notifOn, setNotifOn] = useState(() => localStorage.getItem('echo-notif-enabled') !== 'false');
+  const [readReceiptGlobal, setReadReceiptGlobal] = useState(() => localStorage.getItem('echo-read-receipt-global') !== 'false');
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const readReceiptGlobal = localStorage.getItem('echo-read-receipt-global') !== 'false';
+  const bgFileInputRef = useRef<HTMLInputElement>(null);
+  const { settings, getBg, setBg, resetBg, resetAll, uploadAndGetUrl } = useBackground();
+  const [bgTarget, setBgTarget] = useState<PageKey>('chat');
+  const showDeveloperTools = user?.email === 'ranyv520@gmail.com' || localStorage.getItem('echo-dev-mode') === 'true';
 
   useEffect(() => {
     api<BlockEntry[]>('GET', '/api/blocks').then(setBlockedUsers).catch(() => {});
@@ -84,13 +88,9 @@ export default function SettingsPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || '上传失败');
 
-      const userKey = 'echo-user';
-      const cached = JSON.parse(localStorage.getItem(userKey) || '{}');
-      cached.avatar = data.url;
-      localStorage.setItem(userKey, JSON.stringify(cached));
+      updateUser({ avatar: data.url });
       setMsg('头像已更新');
       toast('头像已更新', 'success');
-      window.location.reload();
     } catch (e: any) {
       setMsg(e.message || '上传失败');
       toast(e.message || '上传失败', 'error');
@@ -105,7 +105,22 @@ export default function SettingsPage() {
     toast('服务器地址已更新', 'success');
   };
 
-  const avatarUrl = user?.avatar || '';
+  const handleBgUpload = async (file: File) => {
+    if (file.size > 10 * 1024 * 1024) { toast('图片不能超过 10MB', 'error'); return; }
+    try {
+      const url = await uploadAndGetUrl(file);
+      await setBg(bgTarget, url);
+      toast('背景已更新', 'success');
+    } catch (err: any) { toast(err.message || '上传失败', 'error'); }
+  };
+
+  const pageLabels: Record<PageKey, string> = {
+    conversation: '会话列表',
+    gravity: '引力圈',
+    chat: '聊天界面',
+  };
+
+  const avatarUrl = assetUrl(user?.avatar);
 
   const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
     <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm dark:border-gray-700/50 dark:bg-gray-800/50">
@@ -226,9 +241,10 @@ export default function SettingsPage() {
             label="已读回执（全局）"
             checked={readReceiptGlobal}
             onChange={(v) => {
+              setReadReceiptGlobal(v);
               localStorage.setItem('echo-read-receipt-global', String(v));
+              api('PUT', '/api/users/me', { readReceiptsEnabled: v }).catch(() => {});
               toast(v ? '已读回执已开启' : '已读回执已关闭', 'info');
-              setMsg(v ? '已读回执已开启' : '已读回执已关闭');
             }}
           />
           {blockedUsers.length > 0 && (
@@ -253,39 +269,104 @@ export default function SettingsPage() {
             checked={theme === 'dark'}
             onChange={toggleTheme}
           />
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-gray-700 dark:text-gray-300">消息通知</span>
-            <button
-              onClick={() => {
-                const next = !notifOn;
-                setNotifOn(next);
-                localStorage.setItem('echo-notif-enabled', String(next));
-                if (next && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
-              }}
-              className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors duration-300 ${
-                notifOn ? 'bg-primary-500' : 'bg-gray-200 dark:bg-gray-600'
-              }`}
-            >
-              <motion.span
-                className="inline-block h-5 w-5 rounded-full bg-white shadow-sm"
-                animate={{ x: notifOn ? 24 : 2 }}
-                transition={{ type: 'spring', stiffness: 200, damping: 25 }}
-              />
-            </button>
+          <ToggleSwitch
+            label="消息通知"
+            checked={notifOn}
+            onChange={(v) => {
+              setNotifOn(v);
+              localStorage.setItem('echo-notif-enabled', String(v));
+              if (v && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
+            }}
+          />
+          {showDeveloperTools && (
+            <div>
+              <label className="mb-1.5 block text-sm text-gray-600 dark:text-gray-400">服务器地址</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={serverUrl}
+                  onChange={(e) => setServerUrlState(e.target.value)}
+                  placeholder="例如 http://8.140.194.214:3001"
+                  className="flex-1 rounded-xl border border-gray-200 bg-gray-50 px-4 py-2 text-xs transition-colors focus:border-primary-300 focus:bg-white dark:border-gray-600 dark:bg-gray-700/50 dark:text-gray-100 dark:focus:border-primary-500 dark:focus:bg-gray-700"
+                />
+                <button onClick={saveServerUrl} className="shrink-0 rounded-xl bg-gray-100 px-4 py-2 text-xs font-medium text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 transition-colors">更新</button>
+              </div>
+            </div>
+          )}
+        </Section>
+
+        {/* Background Settings */}
+        <Section title="背景设置">
+          <div className="flex gap-2 flex-wrap">
+            {(['conversation', 'gravity', 'chat'] as const).map(key => (
+              <button
+                key={key}
+                onClick={() => setBgTarget(key)}
+                className={`px-3 py-1.5 text-xs rounded-full transition-colors ${
+                  bgTarget === key
+                    ? 'bg-primary-500 text-white'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300'
+                }`}
+              >
+                {pageLabels[key]}
+              </button>
+            ))}
           </div>
-          <div>
-            <label className="mb-1.5 block text-sm text-gray-600 dark:text-gray-400">服务器地址</label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={serverUrl}
-                onChange={(e) => setServerUrlState(e.target.value)}
-                placeholder="例如 http://8.140.194.214:3001"
-                className="flex-1 rounded-xl border border-gray-200 bg-gray-50 px-4 py-2 text-xs transition-colors focus:border-primary-300 focus:bg-white dark:border-gray-600 dark:bg-gray-700/50 dark:text-gray-100 dark:focus:border-primary-500 dark:focus:bg-gray-700"
-              />
-              <button onClick={saveServerUrl} className="shrink-0 rounded-xl bg-gray-100 px-4 py-2 text-xs font-medium text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 transition-colors">更新</button>
+
+          {/* Preview */}
+          <div className="relative h-32 rounded-xl overflow-hidden border border-gray-200 dark:border-gray-600">
+            {(() => {
+              const previewUrl = getBg(bgTarget);
+              if (!previewUrl) {
+                return (
+                  <div className="w-full h-full bg-gradient-to-br from-gray-100 via-gray-200 to-gray-300 dark:from-gray-800 dark:via-gray-900 dark:to-gray-950 flex items-center justify-center">
+                    <span className="text-xs text-gray-400 dark:text-gray-500">无背景</span>
+                  </div>
+                );
+              }
+              return <img src={assetUrl(previewUrl)} alt="" className="w-full h-full object-cover" />;
+            })()}
+            <div className="absolute bottom-2 right-2 flex gap-1.5">
+              <button
+                onClick={() => bgFileInputRef.current?.click()}
+                className="flex items-center gap-1 rounded-lg bg-black/50 backdrop-blur-sm px-2.5 py-1.5 text-xs text-white hover:bg-black/70 transition-colors"
+              >
+                <Image size={12} /> 上传
+              </button>
+              <button
+                onClick={() => {
+                  resetBg(bgTarget);
+                  toast('已重置', 'info');
+                }}
+                className="flex items-center gap-1 rounded-lg bg-black/50 backdrop-blur-sm px-2.5 py-1.5 text-xs text-white hover:bg-black/70 transition-colors"
+              >
+                <RotateCcw size={12} /> 重置
+              </button>
             </div>
           </div>
+
+          <input
+            ref={bgFileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleBgUpload(file);
+              e.target.value = '';
+            }}
+          />
+
+          <p className="text-[10px] text-gray-400">
+            支持 JPG/PNG/WEBP，最大 10MB。图片将上传至服务器，支持多端同步。
+          </p>
+
+          <button
+            onClick={() => { resetAll(); toast('已恢复默认背景', 'info'); }}
+            className="w-full rounded-xl border border-gray-200 dark:border-gray-600 py-2 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+          >
+            恢复全部默认
+          </button>
         </Section>
 
         {/* Logout */}
@@ -301,7 +382,7 @@ export default function SettingsPage() {
         <div className="text-xs text-slate-400 mt-6 text-center pb-4 space-y-0.5">
           <p>开发者邮箱: ranyv520@gmail.com</p>
           <p>微信: Echo11238</p>
-          <p className="font-mono text-primary-500">Echo ID: 260341</p>
+          <p className="font-mono text-primary-500">Echo ID: 260520</p>
         </div>
       </div>
     </div>

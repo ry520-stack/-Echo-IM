@@ -1,7 +1,8 @@
 import { useRef } from 'react';
+import { assetUrl } from '../utils/assetUrl';
 
-export default function GravityLockedCard({ name, avatar, onClick, onLongPress, isDark }: {
-  name: string; avatar?: string; onClick: () => void; onLongPress: () => void; isDark?: boolean;
+export default function GravityLockedCard({ name, avatar, onClick, onLongPress, isDark, isPinned }: {
+  name: string; avatar?: string; onClick: () => void; onLongPress: (targetNode?: HTMLElement) => void; isDark?: boolean; isPinned?: boolean;
 }) {
   const isLongPressing = useRef(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -32,12 +33,11 @@ export default function GravityLockedCard({ name, avatar, onClick, onLongPress, 
         onTouchStart={(e) => {
           isLongPressing.current = false;
           startPos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-          e.stopPropagation();
+          const targetNode = e.currentTarget;
           if (timerRef.current) clearTimeout(timerRef.current);
           timerRef.current = setTimeout(() => {
             isLongPressing.current = true;
-            e.preventDefault();
-            onLongPress();
+            onLongPress(targetNode as HTMLElement);
           }, 500);
         }}
         onTouchMove={(e) => {
@@ -54,9 +54,12 @@ export default function GravityLockedCard({ name, avatar, onClick, onLongPress, 
             e.stopPropagation();
           }
         }}
-        className={`relative flex items-center gap-4 p-4 rounded-2xl backdrop-blur-xl border shadow-[0_8px_32px_rgba(0,0,0,0.5)] cursor-pointer select-none overflow-hidden transition-colors ${
-          isDark ? 'bg-zinc-900/40 border-white/5 active:bg-zinc-800/40' : 'bg-white/80 border-gray-200/50 active:bg-gray-50'
-        }`}
+        onTouchCancel={() => {
+          if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+        }}
+        className={`relative flex items-center gap-4 p-4 rounded-2xl backdrop-blur-xl border shadow-[0_8px_32px_rgba(0,0,0,0.3)] cursor-pointer select-none overflow-hidden transition-colors ${
+          isDark ? 'bg-white/8 border-white/10 active:bg-white/15' : 'bg-white/50 border-white/30 active:bg-white/70'
+        } ${isPinned ? 'border-b-2 border-b-blue-400' : ''}`}
         style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none' }}
       >
         {/* Floating blobs */}
@@ -68,14 +71,13 @@ export default function GravityLockedCard({ name, avatar, onClick, onLongPress, 
         {/* Avatar */}
         <div className="relative z-10 w-11 h-11 rounded-full bg-gradient-to-tr from-indigo-500/50 to-purple-500/50 p-[1px] shrink-0">
           <div className="w-full h-full rounded-full bg-amber-500 flex items-center justify-center text-base font-bold text-white overflow-hidden">
-            {avatar ? <img src={avatar} alt="" className="w-full h-full object-cover" /> : name[0]?.toUpperCase()}
+            {avatar ? <img src={assetUrl(avatar)} alt="" className="w-full h-full object-cover" /> : name[0]?.toUpperCase()}
           </div>
         </div>
 
         {/* Name */}
         <div className="relative z-10 flex-1 min-w-0">
           <p className={`text-sm font-medium tracking-wide truncate ${isDark ? 'text-white/80' : 'text-gray-800'}`}>{name}</p>
-          <p className={`text-[10px] mt-0.5 ${isDark ? 'text-zinc-500' : 'text-gray-400'}`}>强力捕捉</p>
         </div>
       </div>
     </>

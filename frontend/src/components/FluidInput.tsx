@@ -1,63 +1,54 @@
-import { useState } from 'react';
+import { useState, forwardRef } from 'react';
 
-export default function FluidInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
-  const [isFocused, setIsFocused] = useState(false);
-
-  return (
-    <div className="relative w-full h-10 group">
-      <style>{`
-        .gooey-bg {
-          background: #050505;
-          filter: blur(8px) contrast(18);
-        }
-        .orb-fluid {
-          position: absolute;
-          width: 50px;
-          height: 50px;
-          border-radius: 50%;
-          background-color: var(--bg);
-          animation: orb-anim 6s infinite ease-in-out;
-          pointer-events: none;
-        }
-        @keyframes orb-anim {
-          0% {
-            opacity: 0;
-            transform: translate(var(--x2), -50%) rotate(0deg) translateX(var(--x1)) scale(var(--scale));
-          }
-          30%, 70% { opacity: 1; }
-          100% {
-            opacity: 0;
-            transform: translate(var(--x2), -50%) rotate(calc(var(--rot) * 360deg)) translateX(var(--x1)) scale(var(--scale));
-          }
-        }
-      `}</style>
-
-      {/* Fluid background layer — only visible when focused */}
-      <div className={`absolute inset-0 overflow-hidden rounded-full transition-opacity duration-700 pointer-events-none z-0 ${
-        isFocused ? 'opacity-100' : 'opacity-0'
-      }`}>
-        <div className="gooey-bg absolute inset-[-8px] w-[calc(100%+16px)] h-[calc(100%+16px)]">
-          <div className="orb-fluid top-1/2 left-0" style={{ '--bg': 'rgba(120, 50, 200, 0.5)', '--scale': 0.8, '--x1': '30px', '--x2': '10%', '--rot': -1 } as React.CSSProperties} />
-          <div className="orb-fluid top-1/2 left-1/4" style={{ '--bg': 'rgba(50, 100, 220, 0.45)', '--scale': 0.6, '--x1': '40px', '--x2': '20%', '--rot': 0.5 } as React.CSSProperties} />
-          <div className="orb-fluid top-1/2 left-1/2" style={{ '--bg': 'rgba(80, 40, 180, 0.45)', '--scale': 0.9, '--x1': '50px', '--x2': '-10%', '--rot': -0.8 } as React.CSSProperties} />
-          <div className="orb-fluid top-1/2 right-0" style={{ '--bg': 'rgba(40, 120, 180, 0.5)', '--scale': 0.7, '--x1': '20px', '--x2': '-30%', '--rot': 1.2 } as React.CSSProperties} />
-        </div>
-      </div>
-
-      {/* Input layer — transparent bg, always crisp text */}
-      <input
-        type="text"
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        placeholder={placeholder || '输入消息...'}
-        onFocus={() => setIsFocused(true)}
-        onBlur={() => setIsFocused(false)}
-        className={`relative z-10 w-full h-full bg-transparent px-4 rounded-full text-sm font-medium text-zinc-200 placeholder-zinc-600 outline-none transition-colors duration-300 ${
-          isFocused
-            ? 'border-transparent'
-            : 'border border-zinc-800 bg-zinc-900/50'
-        }`}
-      />
-    </div>
-  );
+interface FluidInputProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
+  value: string;
+  onChange: (e: any) => void;
+  isRecording?: boolean;
+  onMicClick?: () => void;
 }
+
+const FluidInput = forwardRef<HTMLTextAreaElement, FluidInputProps>(
+  ({ value, onChange, onFocus, onBlur, className, style, isRecording, onMicClick, ...rest }, ref) => {
+    const [isFocused, setIsFocused] = useState(false);
+
+    return (
+      <div
+        className={`flex items-end w-full min-h-[52px] rounded-3xl border transition-all duration-300 ${
+          isFocused
+            ? 'border-primary-400 bg-white/80 dark:bg-zinc-800/80 shadow-sm'
+            : 'border-gray-200 bg-gray-50/80 dark:border-zinc-700 dark:bg-zinc-800/50'
+        } ${isRecording ? 'border-primary-400 bg-primary-50/50 dark:border-primary-800 dark:bg-primary-900/20 ring-2 ring-primary-500/20' : ''} ${className || ''}`}
+        style={style}
+      >
+        {/* 麦克风按钮 */}
+        <button
+          type="button"
+          onClick={(e) => { e.preventDefault(); onMicClick?.(); }}
+          className={`flex-shrink-0 w-10 h-10 ml-1.5 mb-1.5 rounded-full flex items-center justify-center transition-all duration-200 ${
+            isRecording
+              ? 'bg-primary-500 text-white shadow-md shadow-primary-500/30 animate-pulse'
+              : 'bg-gray-200/80 text-gray-500 hover:bg-gray-300 dark:bg-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-600'
+          }`}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" />
+          </svg>
+        </button>
+
+        {/* 输入框 */}
+        <textarea
+          {...rest}
+          ref={ref}
+          value={value}
+          onChange={onChange}
+          placeholder="输入消息..."
+          onFocus={(e) => { setIsFocused(true); onFocus?.(e); }}
+          onBlur={(e) => { setIsFocused(false); onBlur?.(e); }}
+          className="flex-1 bg-transparent border-none outline-none resize-none text-sm text-gray-800 dark:text-gray-100 placeholder:text-gray-400 px-2 py-3.5 leading-relaxed"
+        />
+      </div>
+    );
+  }
+);
+
+export default FluidInput;

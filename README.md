@@ -1,110 +1,217 @@
-# Echo：星际与共鸣（Space & Resonance）
+# Echo IM
 
-> 极简、沉浸、反臃肿的私人社交宇宙 —— 由一位 21 岁独立开发者，开发的星际通讯站。
+Echo 是一个面向移动端体验的即时通讯项目。它不是纯聊天 Demo，而是把私聊、群聊、好友关系、动态可见范围、星域分组、关系页、表情包、背景设置和 5+App 打包适配放在同一个产品体系里。
 
----
+当前仓库对应的是正在迭代的最新版代码，不再沿用旧版“星轨”文案。项目里的核心概念现在统一为：
 
-Echo 以"宇宙、引力、星轨"为核心设计语言。大面积留白、深邃蓝紫调、Glassmorphism 毛玻璃、Framer Motion 弹簧物理动效。**拒绝臃肿，回归纯粹。**
+- 聊天：即时沟通。
+- 动态：内容发布和互动。
+- 星域：好友分组和动态权限。
+- 关系星域：某个好友与你之间的资料、关系数据和动态入口。
+- 群星域：群聊资料、成员和群关系入口。
 
----
+## 当前功能
 
-## 🌌 核心体验
+### 账号与用户
 
-### 引力圈 (Gravity Zone)
-首页左滑，进入隐藏的"引力圈"。深色模式下是 OLED 纯黑深空，将最重要的联系人"捕获"至此。长按卡片安全移出，300ms 手势防误触锁。
+- 邮箱注册、登录、找回密码。
+- 图形验证码与邮箱验证码。
+- Echo ID 搜索用户。
+- 头像、昵称、个性签名、自动回复、陌生人消息权限。
+- 开发者 Echo ID 和移动端展示适配。
 
-### 对称隐私
-聊天双方中任意一方关闭已读反馈 → **双方消息全部隐藏已读状态**。要么都坦诚，要么都自由。
+### 私聊
 
-### 消息本地销毁 & 120秒时空撤回
-删除仅本地执行，不惊动对方。撤回在 2 分钟内双向生效，化为一句"撤回了一条消息"。
+- 私聊消息实时收发，基于 Socket.IO。
+- 文本、图片、语音、视频上传接口。
+- 已读回执、未读数、在线状态、最后在线时间。
+- 消息撤回、单条删除、批量删除、清空会话。
+- 会话置顶、隐藏、长按菜单。
+- 会话列表顶部支持好友搜索和聊天记录搜索。
+- 当前聊天页内收到同一好友消息时不弹通知，其他会话消息才弹通知。
+- 支持聊天页左滑进入“关系星域”。
 
-### 流体滑动语音 (Gooey Voice Swipe)
-长按麦克风 → SVG 流体滤镜轨道 + Framer Motion 物理拖拽。向右滑发送，松手果冻回弹取消。
+### 表情包
 
-### 会呼吸的底部输入栏
-5 秒无操作自动阻尼折叠，输入框居中拉长。云端表情库 + 每个聊天室独立自定义背景。
+- 自定义表情包上传。
+- 表情包管理和批量删除。
+- 默认展示 4 个，展开后一页 12 个。
+- 支持横向分页切换，适配移动端触控。
 
----
+### 好友与关系星域
 
-## ☄️ 星轨 (Orbit) — 朋友圈
+- 好友申请、同意、拒绝。
+- 好友备注、置顶、拉黑、删除。
+- 单删和互删逻辑在后端关系状态中处理。
+- 好友资料页支持备注、专属聊天背景、星域分组。
+- 左滑进入关系星域页，展示头像、昵称、在线状态、Echo ID、关系数据和最近动态。
+- 关系数据预留：所属星域、认识时间、最近互动、亲密值等。
 
-### 悬浮循环堆叠 (Floating Stack)
-图片 3D 堆叠，向左拖拽顶层切图。**10 秒无操作自动倒放复位** — 像录像带倒带一样丝滑。
+### 星域
 
-### 宫格横滑分页 (Paginated Grid)
-超过 9 张自动分页，整体横滑翻页。Framer Motion 弹簧阻尼。
+星域是 Echo 的好友分组和权限系统。
 
-### 星域权限 & 个人星轨
-发布到特定星域（家人星域、技术圈星域），定时发射。聊天室左滑 → 好友个人星轨全屏沉浸。
+- 创建、编辑、删除星域。
+- 给星域设置颜色。
+- 添加好友到星域、从星域移除好友。
+- 好友可以属于多个星域。
+- 动态发布时可以选择公开、部分星域可见、部分好友不可见。
+- 最终权限逻辑：星域允许范围减去单独排除的人。
 
----
+### 动态
 
-## 🛰️ 技术护城河
+- 发布文字和图片动态。
+- 单条动态最多 18 张图片。
+- 发布页图片使用宫格方式预览，避免横向滑动找图。
+- 动态图片展示支持两种模式：
+  - 悬浮折叠。
+  - 宫格展示。
+- 超过 9 张图时分页展示。
+- 支持点赞、评论、删除。
+- 支持按星域权限过滤可见范围。
 
-| 能力 | 说明 |
-|------|------|
-| 前端 OOM 管线 | Canvas/WebP 极限压缩，10MB → 200KB |
-| 键盘避让 | `dvh` 动态高度，永不黑屏 |
-| 物理阻尼动画 | 全 App Framer Motion Spring Physics |
-| 乐观更新 | 弱网/VPN 下消息瞬间本地渲染 |
-| 手势锁死 | `stopPropagation` + 坐标阈值 + 300ms 锁 |
+### 群聊
 
----
+- 创建群聊，选择好友加入。
+- 群头像、群名称、群公告。
+- 群成员列表。
+- 群主、管理员、普通成员角色。
+- 拉人进群、移除成员。
+- 设置我在本群的昵称和备注。
+- 群主转让、退群、解散群。
+- 群聊左滑进入“群星域”。
 
-## 📦 技术栈
+### 引力圈
 
+- 侧边栏入口进入引力圈。
+- 支持捕捉好友到引力圈。
+- 引力圈用于放置重要联系人，是聊天列表之外的快速关系入口。
+
+### 回声胶囊
+
+- 定时消息入口。
+- 支持查看已设置的定时消息。
+- 定时发送能力依赖后端 delayed message 接口。
+
+### 背景与外观
+
+- 深色/浅色模式切换。
+- 会话列表背景、聊天界面背景、引力圈背景。
+- 好友专属聊天背景。
+- 图片上传后作为背景，支持恢复默认。
+- 移动端底部输入栏、键盘弹出和触控手势做了适配。
+
+### 通知与 App 打包
+
+- Web 端已有浏览器通知和 Service Worker 点击跳转逻辑。
+- 5+App / HBX 打包目录已单独准备过，当前项目也保留了适配代码。
+- 真正的系统级离线推送需要接入 DCloud uni-push 或厂商推送，单靠网页前端无法做到完全类似微信的后台通知。
+
+## 技术栈
+
+### 前端
+
+- React 19
+- TypeScript
+- Vite 8
+- Tailwind CSS
+- Framer Motion
+- React Router
+- Socket.IO Client
+- lucide-react
+
+### 后端
+
+- Node.js
+- Express
+- TypeScript
+- Prisma
+- PostgreSQL
+- Socket.IO
+- Multer
+- JWT
+- Zod
+- Nodemailer
+
+### 部署
+
+- Docker Compose
+- Nginx
+- PostgreSQL 16
+- 阿里云 ECS
+
+生产环境主要容器：
+
+- `echo-frontend-1`
+- `echo-backend-1`
+- `echo-db-1`
+
+## 目录结构
+
+```text
+Echo/
+├─ backend/
+│  ├─ prisma/
+│  └─ src/
+│     ├─ controllers/
+│     ├─ routes/
+│     ├─ services/
+│     ├─ middlewares/
+│     └─ utils/
+├─ frontend/
+│  └─ src/
+│     ├─ api/
+│     ├─ components/
+│     ├─ contexts/
+│     ├─ hooks/
+│     ├─ pages/
+│     └─ utils/
+├─ docs/
+├─ docker-compose.yml
+└─ docker-compose.prod.yml
 ```
-前端: React 19 + TypeScript + Tailwind CSS 3 + Vite 8 + Framer Motion 12
-后端: Node.js + Express + Prisma + PostgreSQL 16
-实时: Socket.IO (WebSocket)
-部署: Docker Compose 三容器 + Nginx + 阿里云 ECS
-```
 
-## 🚀 快速开始
+## 本地开发
+
+### 后端
 
 ```bash
-# 后端
-cd backend && npm install
-npx prisma generate && npx prisma db push
+cd backend
+npm install
+npx prisma generate
+npx prisma db push
 npm run dev
-
-# 前端
-cd frontend && npm install && npm run dev
 ```
 
+### 前端
+
 ```bash
-# Docker 生产部署
-cp .env.example .env
+cd frontend
+npm install
+npm run dev
+```
+
+## 生产部署
+
+```bash
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-## 🏗️ 项目结构
+部署前需要准备后端环境变量。仓库不会提交 `.env`、证书、上传文件、数据库 volume、`node_modules`、`dist` 等本地或敏感内容。
 
-```
-Echo/
-├── backend/src/{controllers,services,routes,middlewares}
-├── frontend/src/{pages,components,contexts,hooks,api}
-├── docker-compose.prod.yml
-└── .env.example
-```
+## 文档
 
-## 📚 开发者手记 (Developer Notes)
+- 掘金文章草稿：[docs/ECHO_JUEJIN_7_ARTICLE_DRAFTS.md](docs/ECHO_JUEJIN_7_ARTICLE_DRAFTS.md)
+- 抖音脚本：[docs/ECHO_DOUYIN_SCRIPT_PACK.md](docs/ECHO_DOUYIN_SCRIPT_PACK.md)
+- 后续修复计划：[docs/ECHO_NEXT_FIX_PLAN.md](docs/ECHO_NEXT_FIX_PLAN.md)
+- HBX 自签名记录：[docs/HBX自签名.md](docs/HBX自签名.md)
 
-从架构设计到交互引擎，从踩坑排错到工程化护城河 — 7 篇技术手记记录 Echo 的完整演进过程。
+## 状态说明
 
-| 编号 | 文章 | 内容 |
-|------|------|------|
-| 01 | [架构设计与极简美学](docs/developer_notes/01-架构设计与极简美学.md) | 技术栈、色彩材质体系、Docker 三容器架构 |
-| 02 | [引力圈与手势交互引擎](docs/developer_notes/02-引力圈与手势交互引擎.md) | 手势判定逻辑、防误触锁、Spring 动画统一参数 |
-| 03 | [聊天室深度交互与对称隐私](docs/developer_notes/03-聊天室深度交互与对称隐私.md) | 对称隐私、撤回/删除、GooeySwipe、动态输入栏 |
-| 04 | [星轨画廊与 Framer Motion 物理动效](docs/developer_notes/04-星轨画廊与Framer-Motion物理动效.md) | 悬浮堆叠、10秒倒放、宫格横滑分页 |
-| 05 | [移动端工程化与技术护城河](docs/developer_notes/05-移动端工程化与技术护城河.md) | OOM 管线、键盘避让、乐观更新、事件锁死 |
-| 06 | [开发排错日志与踩坑记录](docs/developer_notes/06-开发排错日志与踩坑记录.md) | 手势穿透、深色光晕、布局黑屏、状态不同步 |
-| 07 | [星轨共鸣视觉系统设计](docs/developer_notes/07-星轨共鸣视觉系统设计.md) | 天体物理 × 时间流逝感的视觉落地 |
+这个项目仍在快速迭代中。当前版本重点已经从“能聊天”推进到“关系、权限、动态、群聊和 App 化准备”。离线推送、原生能力增强、群通知和更完整的 App 权限配置仍需要继续接入 DCloud / 厂商推送体系。
 
----
+## GitHub
 
-> 不是在堆砌功能，而是在做减法和体验的乘法。
->
-> GitHub: [ry520-stack/Echo-IM](https://github.com/ry520-stack/Echo-IM)
+当前发布仓库：
+
+https://github.com/ry520-stack/-Echo-IM

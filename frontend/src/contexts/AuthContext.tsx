@@ -54,6 +54,13 @@ function getApiBase() {
   return (import.meta as any).env?.VITE_API_BASE || '';
 }
 
+function requestNotificationIfSafe() {
+  if (!('Notification' in window) || !window.isSecureContext) return;
+  if (Notification.permission === 'default') {
+    Notification.requestPermission().catch(() => {});
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
@@ -97,10 +104,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setToken(data.token);
     setUser(data.user);
     saveAuth(data.token, data.user);
-    // Request notification permission after login
-    if ('Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission();
-    }
+    requestNotificationIfSafe();
   };
 
   const register = async (username: string, email: string, password: string, code?: string) => {
@@ -120,10 +124,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setToken(data.token);
     setUser(data.user);
     saveAuth(data.token, data.user);
-    // Request notification permission after register
-    if ('Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission();
-    }
+    requestNotificationIfSafe();
   };
 
   const logout = () => {

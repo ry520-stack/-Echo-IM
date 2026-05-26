@@ -26,7 +26,7 @@ export default function ConversationList({ searchText, searchTab }: { searchText
   const nav = useNavigate();
   const { id: chatId } = useParams();
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  const { permission, requestPermission } = useNotification();
+  const { permission, requestPermission } = useNotification(false);
   const { getBg } = useBackground();
   const [showPermAsk, setShowPermAsk] = useState(false);
   const [loading, setLoading] = useState(true);

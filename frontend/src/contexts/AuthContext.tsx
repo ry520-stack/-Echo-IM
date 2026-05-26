@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
+import { registerNativePushDevice } from '../utils/nativePush';
 
 interface User {
   id: string;
@@ -79,6 +80,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (!freshUser) return;
           setUser(freshUser);
           localStorage.setItem(USER_KEY, JSON.stringify(freshUser));
+          registerNativePushDevice(saved.token).catch(() => {});
         })
         .catch(() => {});
     }
@@ -105,6 +107,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(data.user);
     saveAuth(data.token, data.user);
     requestNotificationIfSafe();
+    registerNativePushDevice(data.token).catch(() => {});
   };
 
   const register = async (username: string, email: string, password: string, code?: string) => {
@@ -125,6 +128,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(data.user);
     saveAuth(data.token, data.user);
     requestNotificationIfSafe();
+    registerNativePushDevice(data.token).catch(() => {});
   };
 
   const logout = () => {

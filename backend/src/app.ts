@@ -16,6 +16,7 @@ import delayedRoutes from './routes/delayed.routes';
 import blockRoutes from './routes/block.routes';
 import backgroundRoutes from './routes/background.routes';
 import friendGroupRoutes from './routes/friendGroup.routes';
+import pushRoutes from './routes/push.routes';
 
 const app = express();
 
@@ -89,6 +90,7 @@ app.use('/api/delayed', delayedRoutes);
 app.use('/api/blocks', blockRoutes);
 app.use('/api/backgrounds', backgroundRoutes);
 app.use('/api/friend-groups', friendGroupRoutes);
+app.use('/api/push', pushRoutes);
 
 // Multer 文件上传错误处理
 app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

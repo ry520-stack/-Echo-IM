@@ -1,4 +1,5 @@
 import { getPlus, is5Plus } from './env';
+import { getServerUrl } from '../api/client';
 
 export interface NativePushPayload {
   chatId: string;
@@ -45,4 +46,36 @@ export function bindNativePushClick() {
       // Some 5+ runtimes do not expose removeEventListener for push.
     }
   };
+}
+
+function waitForPlusReady(): Promise<any> {
+  if (is5Plus()) return Promise.resolve(getPlus());
+  return new Promise(resolve => {
+    document.addEventListener('plusready', () => resolve(getPlus()), { once: true });
+    setTimeout(() => resolve(getPlus()), 4000);
+  });
+}
+
+export async function registerNativePushDevice(token: string | null) {
+  if (!token) return false;
+  const plus = await waitForPlusReady();
+  if (!plus?.push?.getClientInfo) return false;
+
+  const info = plus.push.getClientInfo();
+  const clientId = info?.clientid || info?.clientId;
+  if (!clientId) return false;
+
+  const res = await fetch(`${getServerUrl()}/api/push/devices`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      clientId,
+      platform: plus.os?.name || 'android',
+      appId: info?.appid || info?.appId || '',
+    }),
+  });
+  return res.ok;
 }

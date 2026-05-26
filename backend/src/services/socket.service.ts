@@ -4,6 +4,7 @@ import { verifyToken } from './auth.service';
 import prisma from '../utils/prisma';
 import * as blockService from './block.service';
 import { canSendPrivateMessage, canInteractWithUser } from './messagePermission.service';
+import { pushToUsers } from './push.service';
 
 let io: Server | null = null;
 
@@ -13,6 +14,37 @@ interface OnlineUser {
 }
 
 const onlineUsers: OnlineUser[] = [];
+
+export function isUserOnline(userId: string) {
+  return onlineUsers.some(u => u.userId === userId);
+}
+
+function previewMessage(type: string, content: string) {
+  if (type === 'image') return '[图片]';
+  if (type === 'voice') return '[语音]';
+  if (type === 'video') return '[视频]';
+  return content.length > 60 ? content.slice(0, 60) + '...' : content;
+}
+
+function pushOfflineMessage(params: {
+  receiverIds: string[];
+  senderName: string;
+  message: { id: string; type: string; content: string; senderId: string; receiverId?: string | null; groupId?: string | null };
+}) {
+  const offlineIds = params.receiverIds.filter(id => id !== params.message.senderId && !isUserOnline(id));
+  if (offlineIds.length === 0) return;
+
+  pushToUsers({
+    userIds: offlineIds,
+    title: params.senderName,
+    body: previewMessage(params.message.type, params.message.content),
+    payload: {
+      type: params.message.groupId ? 'group-message' : 'private-message',
+      chatId: params.message.groupId || params.message.senderId,
+      messageId: params.message.id,
+    },
+  }).catch(() => {});
+}
 
 async function saveMessage(data: {
   senderId: string;
@@ -165,8 +197,22 @@ export function initSocket(httpServer: HttpServer) {
         if (msg) {
           if (data.receiverId) {
             socket.to(`user:${data.receiverId}`).emit('message:receive', msg);
+            pushOfflineMessage({
+              receiverIds: [data.receiverId],
+              senderName: msg.sender.nickname || msg.sender.username,
+              message: msg,
+            });
           } else if (data.groupId) {
             socket.to(`group:${data.groupId}`).emit('message:receive', msg);
+            const members = await prisma.groupMember.findMany({
+              where: { groupId: data.groupId, userId: { not: userId } },
+              select: { userId: true, group: { select: { name: true } } },
+            });
+            pushOfflineMessage({
+              receiverIds: members.map(m => m.userId),
+              senderName: members[0]?.group.name || '群聊消息',
+              message: msg,
+            });
           }
           ack?.({ ok: true, message: msg });
         }

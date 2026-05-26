@@ -57,6 +57,8 @@ services:
       SMTP_PASS: ${SMTP_PASS}
       QQ_SMTP_USER: ${QQ_SMTP_USER}
       QQ_SMTP_PASS: ${QQ_SMTP_PASS}
+      UNIPUSH_WEBHOOK_URL: ${UNIPUSH_WEBHOOK_URL}
+      UNIPUSH_WEBHOOK_SECRET: ${UNIPUSH_WEBHOOK_SECRET}
       PORT: '3001'
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080}
       # 如启用 Redis，取消下面的注释：

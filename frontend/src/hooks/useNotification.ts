@@ -19,6 +19,9 @@ export function useNotification() {
   const [permission, setPermission] = useState<NotificationPermission>('default');
   const audioCtxRef = useRef<AudioContext | null>(null);
   const pathnameRef = useRef(location.pathname);
+  const canUseNotification = typeof window !== 'undefined'
+    && 'Notification' in window
+    && window.isSecureContext;
 
   // 用 ref 跟踪 pathname，避免闭包捕获旧路由
   useEffect(() => {
@@ -26,10 +29,15 @@ export function useNotification() {
   }, [location.pathname]);
 
   useEffect(() => {
-    setPermission(Notification.permission);
-  }, []);
+    if (canUseNotification) setPermission(Notification.permission);
+    else setPermission('denied');
+  }, [canUseNotification]);
 
   const requestPermission = useCallback(async () => {
+    if (!canUseNotification) {
+      setPermission('denied');
+      return 'denied' as NotificationPermission;
+    }
     try {
       const result = await Notification.requestPermission();
       setPermission(result);
@@ -41,7 +49,9 @@ export function useNotification() {
 
   const playSound = useCallback(() => {
     try {
-      if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) return;
+      if (!audioCtxRef.current) audioCtxRef.current = new AudioContextClass();
       if (audioCtxRef.current.state === 'suspended') audioCtxRef.current.resume();
 
       const ctx = audioCtxRef.current;
@@ -79,7 +89,7 @@ export function useNotification() {
     setIsVisible(true);
     playSound();
 
-    if (document.visibilityState === 'hidden' && permission === 'granted') {
+    if (canUseNotification && document.visibilityState === 'hidden' && permission === 'granted') {
       try {
         const notification = new Notification(data.senderName, {
           body: data.messagePreview,
@@ -94,7 +104,7 @@ export function useNotification() {
         };
       } catch { /* */ }
     }
-  }, [permission, playSound]);
+  }, [canUseNotification, permission, playSound]);
 
   const hideNotification = useCallback(() => {
     setIsVisible(false);
@@ -117,7 +127,7 @@ export function useNotification() {
     };
     socket.on('message:receive', handler);
     return () => { socket.off('message:receive', handler); };
-  }, [socket, showNotification]);
+  }, [socket, showNotification, user?.id]);
 
   return { notification, isVisible, showNotification, hideNotification, permission, requestPermission };
 }

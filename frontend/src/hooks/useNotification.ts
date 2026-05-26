@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useSocket } from '../contexts/SocketContext';
 import { useAuth } from '../contexts/AuthContext';
+import { createNativeMessage, bindNativePushClick } from '../utils/nativePush';
 
 interface NotificationData {
   senderName: string;
@@ -10,7 +11,7 @@ interface NotificationData {
   chatId: string;
 }
 
-export function useNotification() {
+export function useNotification(listenForMessages = true) {
   const { socket } = useSocket();
   const { user } = useAuth();
   const location = useLocation();
@@ -19,6 +20,7 @@ export function useNotification() {
   const [permission, setPermission] = useState<NotificationPermission>('default');
   const audioCtxRef = useRef<AudioContext | null>(null);
   const pathnameRef = useRef(location.pathname);
+  const appPausedRef = useRef(false);
   const canUseNotification = typeof window !== 'undefined'
     && 'Notification' in window
     && window.isSecureContext;
@@ -32,6 +34,19 @@ export function useNotification() {
     if (canUseNotification) setPermission(Notification.permission);
     else setPermission('denied');
   }, [canUseNotification]);
+
+  useEffect(() => bindNativePushClick(), []);
+
+  useEffect(() => {
+    const onPause = () => { appPausedRef.current = true; };
+    const onResume = () => { appPausedRef.current = false; };
+    document.addEventListener('pause', onPause, false);
+    document.addEventListener('resume', onResume, false);
+    return () => {
+      document.removeEventListener('pause', onPause);
+      document.removeEventListener('resume', onResume);
+    };
+  }, []);
 
   const requestPermission = useCallback(async () => {
     if (!canUseNotification) {
@@ -89,7 +104,14 @@ export function useNotification() {
     setIsVisible(true);
     playSound();
 
-    if (canUseNotification && document.visibilityState === 'hidden' && permission === 'granted') {
+    const isBackground = document.visibilityState === 'hidden' || appPausedRef.current;
+
+    if (isBackground) {
+      const sentNative = createNativeMessage(data.senderName, data.messagePreview, { chatId: data.chatId });
+      if (sentNative) return;
+    }
+
+    if (canUseNotification && isBackground && permission === 'granted') {
       try {
         const notification = new Notification(data.senderName, {
           body: data.messagePreview,
@@ -112,7 +134,7 @@ export function useNotification() {
 
   // Listen for socket messages
   useEffect(() => {
-    if (!socket) return;
+    if (!listenForMessages || !socket) return;
     const handler = (msg: any) => {
       if (!msg.senderId || !msg.content) return;
       if (msg.senderId === user?.id) return;
@@ -127,7 +149,7 @@ export function useNotification() {
     };
     socket.on('message:receive', handler);
     return () => { socket.off('message:receive', handler); };
-  }, [socket, showNotification, user?.id]);
+  }, [listenForMessages, socket, showNotification, user?.id]);
 
   return { notification, isVisible, showNotification, hideNotification, permission, requestPermission };
 }

@@ -86,10 +86,12 @@ export default function ChatPage() {
       if (echoSearchRef.current) {
         echoSearchRef.current.style.opacity = String(lerp(1, 0, p * 2));
         echoSearchRef.current.style.transform = `translateX(${lerp(0, -20, p * 2)}px)`;
+        echoSearchRef.current.style.pointerEvents = p < 0.5 ? 'auto' : 'none';
       }
       if (gravSearchRef.current) {
         gravSearchRef.current.style.opacity = String(lerp(0, 1, (p - 0.3) * 2));
         gravSearchRef.current.style.transform = `translateX(${lerp(20, 0, (p - 0.3) * 2)}px)`;
+        gravSearchRef.current.style.pointerEvents = p > 0.5 ? 'auto' : 'none';
       }
 
       // 搜索 tabs（仅首页）
@@ -205,7 +207,7 @@ export default function ChatPage() {
               </div>
             </div>
             {/* Gravity 搜索 */}
-            <div ref={gravSearchRef} className="absolute inset-x-4 top-0 will-change-transform" style={{ opacity: 0 }}>
+            <div ref={gravSearchRef} className="absolute inset-x-4 top-0 will-change-transform" style={{ opacity: 0, pointerEvents: 'none' }}>
               <div className="flex items-center gap-2 rounded-xl bg-slate-100 px-3 py-2 dark:bg-zinc-900/80 shadow-[inset_0_1px_1px_rgba(255,255,255,0.05)]">
                 <span className="text-slate-400 text-sm">🔍</span>
                 <input type="text" placeholder="搜索引力圈好友..."
@@ -214,14 +216,13 @@ export default function ChatPage() {
                 {searchText && <button onClick={() => setSearchText('')} className="text-slate-400 hover:text-slate-600 text-xs">✕</button>}
               </div>
             </div>
-            {/* 搜索 tabs */}
-            {searchText.trim() && (
-              <div ref={echoTabsRef} className="flex gap-1 mt-12">
-                <button onClick={() => setSearchTab('contacts')} className={`px-3 py-1 text-xs rounded-full transition-colors ${searchTab === 'contacts' ? 'bg-primary-500 text-white' : 'bg-gray-100 dark:bg-gray-800 text-gray-500'}`}>好友</button>
-                <button onClick={() => setSearchTab('messages')} className={`px-3 py-1 text-xs rounded-full transition-colors ${searchTab === 'messages' ? 'bg-primary-500 text-white' : 'bg-gray-100 dark:bg-gray-800 text-gray-500'}`}>聊天记录</button>
-              </div>
-            )}
           </div>
+          {page === 0 && searchText.trim() && (
+            <div ref={echoTabsRef} className="flex gap-1 px-4 pb-2">
+              <button onClick={() => setSearchTab('contacts')} className={`px-3 py-1 text-xs rounded-full transition-colors ${searchTab === 'contacts' ? 'bg-primary-500 text-white' : 'bg-gray-100 dark:bg-gray-800 text-gray-500'}`}>{'\u641c\u7d22\u597d\u53cb'}</button>
+              <button onClick={() => setSearchTab('messages')} className={`px-3 py-1 text-xs rounded-full transition-colors ${searchTab === 'messages' ? 'bg-primary-500 text-white' : 'bg-gray-100 dark:bg-gray-800 text-gray-500'}`}>{'\u641c\u7d22\u804a\u5929\u8bb0\u5f55'}</button>
+            </div>
+          )}
         </header>
       )}
 

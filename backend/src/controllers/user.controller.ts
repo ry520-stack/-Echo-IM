@@ -11,9 +11,18 @@ export async function getMe(req: Request, res: Response) {
 }
 
 export async function updateMe(req: Request, res: Response) {
-  const { nickname, avatar, status } = req.body;
+  const { nickname, avatar, status, autoReply, allowStrangerMessage, readReceiptsEnabled, callRingtoneUrl, callRingtoneMode } = req.body;
   try {
-    const user = await userService.updateUser(req.userId, { nickname, avatar, status });
+    const user = await userService.updateUser(req.userId, {
+      nickname,
+      avatar,
+      status,
+      autoReply,
+      allowStrangerMessage,
+      readReceiptsEnabled,
+      callRingtoneUrl,
+      callRingtoneMode,
+    });
     res.json(user);
   } catch (e: any) {
     res.status(400).json({ error: e.message });

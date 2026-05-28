@@ -1,4 +1,5 @@
 import prisma from '../utils/prisma';
+import { getIO } from './socket.service';
 
 const memberSelect = {
   userId: true,
@@ -94,6 +95,13 @@ export async function createGroup(userId: string, name: string, memberIds: strin
     },
   });
 
+  const io = getIO();
+  if (io) {
+    const memberRooms = [userId, ...uniqueMemberIds].map(id => `user:${id}`);
+    io.in(memberRooms).socketsJoin(`group:${group.id}`);
+    memberRooms.forEach(room => io.to(room).emit('group:updated', { groupId: group.id, action: 'created' }));
+  }
+
   return group;
 }
 
@@ -148,6 +156,13 @@ export async function addMembers(groupId: string, userId: string, memberIds: str
   await prisma.groupMember.createMany({
     data: toAdd.map(id => ({ groupId, userId: id, role: 'member' })),
   });
+
+  const io = getIO();
+  if (io) {
+    io.in(toAdd.map(id => `user:${id}`)).socketsJoin(`group:${groupId}`);
+    toAdd.forEach(id => io.to(`user:${id}`).emit('group:updated', { groupId, action: 'added' }));
+    io.to(`group:${groupId}`).emit('group:updated', { groupId, action: 'members-added' });
+  }
 
   return prisma.groupChat.findUnique({
     where: { id: groupId },

@@ -20,6 +20,8 @@ import pushRoutes from './routes/push.routes';
 
 const app = express();
 
+app.set('trust proxy', 1);
+
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 
 // CORS 限制

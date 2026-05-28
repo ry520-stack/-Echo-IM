@@ -22,6 +22,8 @@ model User {
   autoReply           String   @default("")
   allowStrangerMessage  Boolean  @default(true)
   readReceiptsEnabled   Boolean  @default(true)
+  callRingtoneUrl       String   @default("")
+  callRingtoneMode      String   @default("peer")
   lastSeenAt           DateTime @default(now())
   bgConversation       String   @default("")
   bgGravity            String   @default("")

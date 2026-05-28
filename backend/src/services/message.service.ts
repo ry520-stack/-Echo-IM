@@ -59,7 +59,7 @@ export async function getGroupMessages(
   const isMember = await prisma.groupMember.findUnique({
     where: { groupId_userId: { groupId, userId } },
   });
-  if (!isMember) throw new Error('无权访问该群组消息');
+  if (!isMember) throw new Error('No permission to access this group');
 
   // Get the group conversation clear time
   const clearRecord = await prisma.groupConversationClear.findUnique({
@@ -103,22 +103,28 @@ export async function getConversations(userId: string) {
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-  const sentMessages = await prisma.message.findMany({
-    where: { senderId: userId, receiverId: { not: null }, createdAt: { gte: thirtyDaysAgo } },
-    orderBy: { createdAt: 'desc' },
-    select: { receiverId: true, createdAt: true },
-    distinct: ['receiverId'],
-    take: 100,
-  });
+  const [sentMessages, receivedMessages, allHiddenIds] = await Promise.all([
+    prisma.message.findMany({
+      where: { senderId: userId, receiverId: { not: null }, createdAt: { gte: thirtyDaysAgo } },
+      orderBy: { createdAt: 'desc' },
+      select: { receiverId: true, createdAt: true },
+      distinct: ['receiverId'],
+      take: 100,
+    }),
+    prisma.message.findMany({
+      where: { receiverId: userId, createdAt: { gte: thirtyDaysAgo } },
+      orderBy: { createdAt: 'desc' },
+      select: { senderId: true, createdAt: true },
+      distinct: ['senderId'],
+      take: 100,
+    }),
+    prisma.messageHidden.findMany({
+      where: { userId },
+      select: { messageId: true },
+    }),
+  ]);
 
-  const receivedMessages = await prisma.message.findMany({
-    where: { receiverId: userId, createdAt: { gte: thirtyDaysAgo } },
-    orderBy: { createdAt: 'desc' },
-    select: { senderId: true, createdAt: true },
-    distinct: ['senderId'],
-    take: 100,
-  });
-
+  const hiddenSet = new Set(allHiddenIds.map(h => h.messageId));
   const peerMap = new Map<string, Date>();
   for (const m of sentMessages) {
     if (m.receiverId && (!peerMap.has(m.receiverId) || peerMap.get(m.receiverId)! < m.createdAt)) {
@@ -132,90 +138,76 @@ export async function getConversations(userId: string) {
   }
 
   let peerIds = Array.from(peerMap.keys());
-  if (peerIds.length === 0) return [];
+  if (peerIds.length > 0) {
+    const [blocks, relations] = await Promise.all([
+      prisma.blockList.findMany({
+        where: {
+          OR: [
+            { blockerId: userId, blockedId: { in: peerIds } },
+            { blockerId: { in: peerIds }, blockedId: userId },
+          ],
+        },
+      }),
+      prisma.friend.findMany({
+        where: {
+          OR: [
+            { userId, friendId: { in: peerIds } },
+            { userId: { in: peerIds }, friendId: userId },
+          ],
+        },
+      }),
+    ]);
 
-  // 批量查询拉黑和好友关系
-  const [blocks, relations] = await Promise.all([
-    prisma.blockList.findMany({
-      where: {
-        OR: [
-          { blockerId: userId, blockedId: { in: peerIds } },
-          { blockerId: { in: peerIds }, blockedId: userId },
-        ],
-      },
-    }),
-    prisma.friend.findMany({
-      where: {
-        OR: [
-          { userId, friendId: { in: peerIds } },
-          { userId: { in: peerIds }, friendId: userId },
-        ],
-      },
-    }),
-  ]);
-
-  // 过滤被拉黑/被删除的会话
-  const blockedPeerIds = new Set<string>();
-  for (const b of blocks) {
-    blockedPeerIds.add(b.blockerId === userId ? b.blockedId : b.blockerId);
-  }
-
-  const deletedByPeerIds = new Set<string>();
-  for (const r of relations) {
-    if (r.status === 'blocked') {
-      const peerId = r.userId === userId ? r.friendId : r.userId;
-      blockedPeerIds.add(peerId);
+    const blockedPeerIds = new Set<string>();
+    for (const b of blocks) {
+      blockedPeerIds.add(b.blockerId === userId ? b.blockedId : b.blockerId);
     }
-    if (r.status === 'deleted' && r.deletedBy !== userId) {
-      const peerId = r.userId === userId ? r.friendId : r.userId;
-      deletedByPeerIds.add(peerId);
+
+    const deletedByPeerIds = new Set<string>();
+    for (const r of relations) {
+      if (r.status === 'blocked') {
+        const peerId = r.userId === userId ? r.friendId : r.userId;
+        blockedPeerIds.add(peerId);
+      }
+      if (r.status === 'deleted' && r.deletedBy !== userId) {
+        const peerId = r.userId === userId ? r.friendId : r.userId;
+        deletedByPeerIds.add(peerId);
+      }
     }
+    peerIds = peerIds.filter(id => !blockedPeerIds.has(id) && !deletedByPeerIds.has(id));
   }
 
-  // 过滤：移除被拉黑的、被对方删除的
-  peerIds = peerIds.filter(id => !blockedPeerIds.has(id) && !deletedByPeerIds.has(id));
-  if (peerIds.length === 0) return [];
+  const conversations: any[] = [];
+  if (peerIds.length > 0) {
+    const [peers, friendRecords, allUserClears] = await Promise.all([
+      prisma.user.findMany({
+        where: { id: { in: peerIds } },
+        select: { id: true, username: true, nickname: true, avatar: true, digitalId: true, lastSeenAt: true, status: true },
+      }),
+      prisma.friend.findMany({
+        where: {
+          OR: [
+            { userId, friendId: { in: peerIds } },
+            { userId: { in: peerIds }, friendId: userId },
+          ],
+        },
+        select: { userId: true, friendId: true, alias: true },
+      }),
+      prisma.userConversationClear.findMany({
+        where: { userId },
+        select: { peerId: true, clearedAt: true },
+      }),
+    ]);
 
-  const peers = await prisma.user.findMany({
-    where: { id: { in: peerIds } },
-    select: { id: true, username: true, nickname: true, avatar: true, digitalId: true, lastSeenAt: true, status: true },
-  });
+    const aliasMap = new Map<string, string>();
+    for (const f of friendRecords) {
+      const peerId = f.userId === userId ? f.friendId : f.userId;
+      if (f.alias) aliasMap.set(peerId, f.alias);
+    }
+    const userClearMap = new Map(allUserClears.map(c => [c.peerId, c.clearedAt]));
 
-  // 获取备注（支持双向关系）
-  const friendRecords = await prisma.friend.findMany({
-    where: {
-      OR: [
-        { userId, friendId: { in: peerIds } },
-        { userId: { in: peerIds }, friendId: userId },
-      ],
-    },
-    select: { userId: true, friendId: true, alias: true },
-  });
-  const aliasMap = new Map<string, string>();
-  for (const f of friendRecords) {
-    const peerId = f.userId === userId ? f.friendId : f.userId;
-    if (f.alias) aliasMap.set(peerId, f.alias);
-  }
-
-  // 获取每个会话的最后一条消息（排除隐藏和清空的消息）和未读数
-  // 获取所有隐藏的消息ID
-  const allHiddenIds = await prisma.messageHidden.findMany({
-    where: { userId },
-    select: { messageId: true },
-  });
-  const allHiddenSet = new Set(allHiddenIds.map(h => h.messageId));
-
-  // 获取所有单聊清空记录
-  const allUserClears = await prisma.userConversationClear.findMany({
-    where: { userId },
-    select: { peerId: true, clearedAt: true },
-  });
-  const userClearMap = new Map(allUserClears.map(c => [c.peerId, c.clearedAt]));
-
-  const conversationResults = await Promise.all(
-    peers.map(async (peer) => {
+    const userConversations = await Promise.all(peers.map(async (peer) => {
       const clearTime = userClearMap.get(peer.id);
-
       const lastMsg = await prisma.message.findFirst({
         where: {
           OR: [
@@ -223,12 +215,11 @@ export async function getConversations(userId: string) {
             { senderId: peer.id, receiverId: userId },
           ],
           ...(clearTime ? { createdAt: { gt: clearTime } } : {}),
-          id: { notIn: [...allHiddenSet] },
+          id: { notIn: [...hiddenSet] },
         },
         orderBy: { createdAt: 'desc' },
         select: { id: true, content: true, type: true, createdAt: true, senderId: true },
       });
-
       if (!lastMsg) return null;
 
       const unreadCount = await prisma.message.count({
@@ -237,46 +228,97 @@ export async function getConversations(userId: string) {
           receiverId: userId,
           isRecalled: false,
           ...(clearTime ? { createdAt: { gt: clearTime } } : {}),
-          id: { notIn: [...allHiddenSet] },
-          NOT: {
-            readReceipts: { some: { userId } },
-          },
+          id: { notIn: [...hiddenSet] },
+          NOT: { readReceipts: { some: { userId } } },
         },
       });
 
       return {
-        peer: { ...peer, alias: aliasMap.get(peer.id) || '' },
+        type: 'user',
+        peer: { ...peer, alias: aliasMap.get(peer.id) || '', isGroup: false },
         lastMessage: lastMsg,
         unreadCount,
         lastTime: lastMsg.createdAt.toISOString(),
       };
+    }));
+    conversations.push(...userConversations.filter(Boolean));
+  }
+
+  const [groupClears, memberships] = await Promise.all([
+    prisma.groupConversationClear.findMany({
+      where: { userId },
+      select: { groupId: true, clearedAt: true },
     }),
-  );
+    prisma.groupMember.findMany({
+      where: { userId },
+      include: {
+        group: {
+          include: { _count: { select: { members: true } } },
+        },
+      },
+    }),
+  ]);
+  const groupClearMap = new Map(groupClears.map(c => [c.groupId, c.clearedAt]));
 
-  const conversations = conversationResults.filter((c): c is NonNullable<typeof c> => c !== null);
+  const groupConversations = await Promise.all(memberships.map(async (membership) => {
+    const clearTime = groupClearMap.get(membership.groupId);
+    const lastMsg = await prisma.message.findFirst({
+      where: {
+        groupId: membership.groupId,
+        ...(clearTime ? { createdAt: { gt: clearTime } } : {}),
+        id: { notIn: [...hiddenSet] },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, content: true, type: true, createdAt: true, senderId: true },
+    });
 
-  // 按最后消息时间排序
-  conversations.sort((a, b) => {
-    const aTime = a.lastTime || '';
-    const bTime = b.lastTime || '';
-    return bTime.localeCompare(aTime);
-  });
+    const unreadCount = await prisma.message.count({
+      where: {
+        groupId: membership.groupId,
+        senderId: { not: userId },
+        isRecalled: false,
+        ...(clearTime ? { createdAt: { gt: clearTime } } : {}),
+        id: { notIn: [...hiddenSet] },
+        readReceipts: { none: { userId } },
+      },
+    });
 
+    return {
+      type: 'group',
+      peer: {
+        id: membership.groupId,
+        username: membership.group.name,
+        nickname: membership.group.name,
+        avatar: membership.group.avatar || '',
+        digitalId: 0,
+        lastSeenAt: membership.joinedAt,
+        status: `${membership.group._count.members} members`,
+        alias: membership.remark || membership.alias || '',
+        isGroup: true,
+        memberCount: membership.group._count.members,
+      },
+      lastMessage: lastMsg,
+      unreadCount,
+      lastTime: (lastMsg?.createdAt || membership.group.createdAt).toISOString(),
+    };
+  }));
+
+  conversations.push(...groupConversations);
+  conversations.sort((a, b) => String(b.lastTime || '').localeCompare(String(a.lastTime || '')));
   return conversations;
 }
-
 export async function recallMessage(messageId: string, userId: string) {
   const msg = await prisma.message.findUnique({ where: { id: messageId } });
-  if (!msg || msg.senderId !== userId) throw new Error('无权撤回此消息');
+  if (!msg || msg.senderId !== userId) throw new Error('No permission to recall this message');
 
   const elapsed = Date.now() - msg.createdAt.getTime();
-  if (elapsed > 2 * 60 * 1000) throw new Error('超过2分钟，无法撤回');
+  if (elapsed > 2 * 60 * 1000) throw new Error('Cannot recall after 2 minutes');
 
   return prisma.message.update({ where: { id: messageId }, data: { isRecalled: true } });
 }
 
 export async function getConsecutiveDays(userId: string, peerId: string): Promise<number> {
-  // 只查最近365天的消息，避免全量加载
+  // 只查最�?65天的消息，避免全量加�?
   const oneYearAgo = new Date();
   oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
 
@@ -314,13 +356,28 @@ export async function getConsecutiveDays(userId: string, peerId: string): Promis
     } else if (i > 0) {
       break; // gap found
     }
-    // i=0 (today) — allow starting even if no message today
+    // i=0 (today) �?allow starting even if no message today
   }
 
   return days;
 }
 
-export async function searchMessages(userId: string, query: string, limit = 30) {
+export async function searchMessages(
+  userId: string,
+  options: { query?: string; peerId?: string; groupId?: string; date?: string },
+  limit = 60,
+) {
+  const query = options.query?.trim();
+  const dayStart = options.date ? new Date(`${options.date}T00:00:00+08:00`) : null;
+  const dayEnd = dayStart ? new Date(dayStart.getTime() + 24 * 60 * 60 * 1000) : null;
+
+  const memberships = await prisma.groupMember.findMany({
+    where: { userId },
+    select: { groupId: true },
+  });
+  const groupIds = memberships.map(m => m.groupId);
+  if (options.groupId && !groupIds.includes(options.groupId)) return [];
+
   const hiddenIds = await prisma.messageHidden.findMany({
     where: { userId },
     select: { messageId: true },
@@ -329,29 +386,73 @@ export async function searchMessages(userId: string, query: string, limit = 30) 
 
   const messages = await prisma.message.findMany({
     where: {
-      content: { contains: query },
+      ...(query ? { content: { contains: query } } : {}),
+      ...(dayStart && dayEnd ? { createdAt: { gte: dayStart, lt: dayEnd } } : {}),
       isRecalled: false,
-      OR: [
-        { senderId: userId },
-        { receiverId: userId },
-      ],
+      ...(options.peerId
+        ? {
+            OR: [
+              { senderId: userId, receiverId: options.peerId },
+              { senderId: options.peerId, receiverId: userId },
+            ],
+          }
+        : options.groupId
+          ? { groupId: options.groupId }
+          : {
+              OR: [
+                { senderId: userId },
+                { receiverId: userId },
+                ...(groupIds.length ? [{ groupId: { in: groupIds } }] : []),
+              ],
+            }),
     },
     orderBy: { createdAt: 'desc' },
     take: limit,
     include: {
       sender: { select: { id: true, username: true, nickname: true, avatar: true } },
+      group: { select: { id: true, name: true, avatar: true } },
     },
   });
 
   return messages.filter(m => !hiddenSet.has(m.id));
 }
-
-export async function markAllRead(userId: string, peerId: string) {
+export async function markAllRead(userId: string, peerId?: string, groupId?: string) {
   const me = await prisma.user.findUnique({
     where: { id: userId },
     select: { readReceiptsEnabled: true },
   });
+  if (me?.readReceiptsEnabled === false) return 0;
 
+  if (groupId) {
+    const member = await prisma.groupMember.findUnique({
+      where: { groupId_userId: { groupId, userId } },
+    });
+    if (!member) throw new Error('NOT_GROUP_MEMBER');
+
+    const unreadMessages = await prisma.message.findMany({
+      where: {
+        groupId,
+        senderId: { not: userId },
+        isRecalled: false,
+        readReceipts: { none: { userId } },
+      },
+      select: { id: true },
+    });
+
+    if (unreadMessages.length === 0) return 0;
+    await prisma.$transaction(
+      unreadMessages.map(msg =>
+        prisma.readReceipt.upsert({
+          where: { messageId_userId: { messageId: msg.id, userId } },
+          create: { messageId: msg.id, userId, readAt: new Date() },
+          update: { readAt: new Date() },
+        })
+      )
+    );
+    return unreadMessages.length;
+  }
+
+  if (!peerId) throw new Error('peerId or groupId required');
   const unreadMessages = await prisma.message.findMany({
     where: {
       senderId: peerId,
@@ -364,7 +465,6 @@ export async function markAllRead(userId: string, peerId: string) {
 
   if (unreadMessages.length === 0) return 0;
 
-  // 批量插入已读回执（跳过已存在的记录）
   await prisma.$transaction(
     unreadMessages.map(msg =>
       prisma.readReceipt.upsert({
@@ -375,9 +475,8 @@ export async function markAllRead(userId: string, peerId: string) {
     )
   );
 
-  // 批量通知发送方
   const io = getIO();
-  if (io && me?.readReceiptsEnabled !== false) {
+  if (io) {
     io.to(`user:${peerId}`).emit('read:update_batch', {
       messageIds: unreadMessages.map(m => m.id),
       readBy: userId,
@@ -387,15 +486,14 @@ export async function markAllRead(userId: string, peerId: string) {
 
   return unreadMessages.length;
 }
-
-// ——— Message hiding (soft-delete for the requesting user only) ———
+// ——�?Message hiding (soft-delete for the requesting user only) ——�?
 
 export async function hideMessage(userId: string, messageId: string) {
   // Verify the message involves this user
   const msg = await prisma.message.findUnique({ where: { id: messageId } });
-  if (!msg) throw new Error('消息不存在');
+  if (!msg) throw new Error('Message not found');
   const involved = msg.senderId === userId || msg.receiverId === userId;
-  if (!involved) throw new Error('无权操作此消息');
+  if (!involved) throw new Error('No permission to modify this message');
 
   await prisma.messageHidden.upsert({
     where: { userId_messageId: { userId, messageId } },
@@ -424,7 +522,7 @@ export async function batchHideMessages(userId: string, messageIds: string[]) {
 export async function clearUserConversation(userId: string, peerId: string) {
   // Verify the peer exists
   const peer = await prisma.user.findUnique({ where: { id: peerId } });
-  if (!peer) throw new Error('用户不存在');
+  if (!peer) throw new Error('User not found');
 
   await prisma.userConversationClear.upsert({
     where: { userId_peerId: { userId, peerId } },
@@ -438,7 +536,7 @@ export async function clearGroupConversation(userId: string, groupId: string) {
   const member = await prisma.groupMember.findUnique({
     where: { groupId_userId: { groupId, userId } },
   });
-  if (!member) throw new Error('无权操作此群聊');
+  if (!member) throw new Error('No permission to clear this group conversation');
 
   await prisma.groupConversationClear.upsert({
     where: { userId_groupId: { userId, groupId } },

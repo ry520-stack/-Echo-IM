@@ -20,10 +20,57 @@ export function isUserOnline(userId: string) {
 }
 
 function previewMessage(type: string, content: string) {
-  if (type === 'image') return '[图片]';
-  if (type === 'voice') return '[语音]';
-  if (type === 'video') return '[视频]';
+  if (type === 'image') return '[\u56fe\u7247]';
+  if (type === 'voice') return '[\u8bed\u97f3]';
+  if (type === 'video') return '[\u89c6\u9891]';
+  if (type === 'call') return content || '[\u901a\u8bdd]';
+  if (type === 'pet') return content || '[Echo Pet]';
   return content.length > 60 ? content.slice(0, 60) + '...' : content;
+}
+
+const petLines = [
+  '我听见你们的回声啦。',
+  '今天的小火苗还亮着。',
+  '你们刚刚聊得很热闹。',
+  '我在这里陪你们聊天。',
+  '回声宠物冒个泡。'
+];
+
+async function maybeSendPetMessage(params: { senderId: string; receiverId?: string; messageType?: string }) {
+  if (!params.receiverId || params.messageType === 'pet' || params.messageType === 'call') return;
+  const recentCount = await prisma.message.count({
+    where: {
+      OR: [
+        { senderId: params.senderId, receiverId: params.receiverId },
+        { senderId: params.receiverId, receiverId: params.senderId },
+      ],
+      type: { not: 'pet' },
+      createdAt: { gte: new Date(Date.now() - 10 * 60 * 1000) },
+    },
+  });
+  const recentPet = await prisma.message.findFirst({
+    where: {
+      OR: [
+        { senderId: params.senderId, receiverId: params.receiverId, type: 'pet' },
+        { senderId: params.receiverId, receiverId: params.senderId, type: 'pet' },
+      ],
+      createdAt: { gte: new Date(Date.now() - 8 * 60 * 1000) },
+    },
+    select: { id: true },
+  });
+  if (recentPet || recentCount < 3 || recentCount % 5 !== 0) return;
+
+  const content = petLines[Math.floor(recentCount / 5) % petLines.length];
+  const petMsg = await saveMessage({
+    senderId: params.senderId,
+    receiverId: params.receiverId,
+    content,
+    type: 'pet',
+  });
+  if (petMsg) {
+    io?.to(`user:${params.senderId}`).emit('message:receive', petMsg);
+    io?.to(`user:${params.receiverId}`).emit('message:receive', petMsg);
+  }
 }
 
 function pushOfflineMessage(params: {
@@ -215,6 +262,7 @@ export function initSocket(httpServer: HttpServer) {
             });
           }
           ack?.({ ok: true, message: msg });
+          maybeSendPetMessage({ senderId: userId, receiverId: data.receiverId, messageType: data.type || 'text' }).catch(() => {});
         }
       } catch (e: any) {
         ack?.({ error: 'INTERNAL_ERROR', message: e.message || 'send failed' });
@@ -237,10 +285,23 @@ export function initSocket(httpServer: HttpServer) {
       if (!perm.ok || !perm.isFriend) {
         return ack?.({ ok: false, code: perm.code || 'FRIEND_REQUIRED', message: perm.message || '只有好友才能语音通话' });
       }
+      const [caller, receiver] = await Promise.all([
+        prisma.user.findUnique({ where: { id: userId }, select: { callRingtoneUrl: true, callRingtoneMode: true } }),
+        prisma.user.findUnique({ where: { id: data.receiverId }, select: { callRingtoneUrl: true } }),
+      ]);
       socket.to(`user:${data.receiverId}`).emit('call:invite', {
-        senderId: userId, callerName: data.callerName, callerAvatar: data.callerAvatar,
+        senderId: userId,
+        callerName: data.callerName,
+        callerAvatar: data.callerAvatar,
+        receiverRingtoneUrl: receiver?.callRingtoneUrl || '',
+        callerRingtoneUrl: caller?.callRingtoneUrl || '',
       });
-      ack?.({ ok: true });
+      ack?.({
+        ok: true,
+        receiverRingtoneUrl: receiver?.callRingtoneUrl || '',
+        callerRingtoneUrl: caller?.callRingtoneUrl || '',
+        callerRingtoneMode: caller?.callRingtoneMode || 'peer',
+      });
     });
 
     socket.on('call:accept', async (data: { targetId: string }) => {

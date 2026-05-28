@@ -5,6 +5,8 @@ import { useToast } from './ToastContext';
 import CallScreen from '../components/CallScreen';
 import { type CallStatus } from '../hooks/useWebRTC';
 import { getCallReadinessError, getRtcConfig } from '../utils/rtcConfig';
+import { assetUrl } from '../utils/assetUrl';
+import { createNativeMessage } from '../utils/nativePush';
 
 interface CallContextValue {
   callStatus: CallStatus;
@@ -17,6 +19,14 @@ const CallContext = createContext<CallContextValue>({
 });
 
 const CALL_TIMEOUT = 30000;
+
+function formatCallDuration(seconds: number) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
 
 export function CallProvider({ children }: { children: ReactNode }) {
   const { socket } = useSocket();
@@ -35,15 +45,94 @@ export function CallProvider({ children }: { children: ReactNode }) {
   const pendingCandidatesRef = useRef<RTCIceCandidate[]>([]);
   const callTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const ringtoneRef = useRef<HTMLAudioElement | null>(null);
+  const ringTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const connectedAtRef = useRef<number | null>(null);
+  const loggedCallRef = useRef(false);
 
   useEffect(() => { callStatusRef.current = callStatus; }, [callStatus]);
 
+  const stopRinging = useCallback(() => {
+    if (ringTimerRef.current) {
+      clearInterval(ringTimerRef.current);
+      ringTimerRef.current = null;
+    }
+    if (ringtoneRef.current) {
+      ringtoneRef.current.pause();
+      ringtoneRef.current.currentTime = 0;
+      ringtoneRef.current = null;
+    }
+  }, []);
+
+  const playDefaultRing = useCallback(() => {
+    try {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) return;
+      if (!audioCtxRef.current) audioCtxRef.current = new AudioContextClass();
+      if (audioCtxRef.current.state === 'suspended') audioCtxRef.current.resume();
+      const ctx = audioCtxRef.current;
+      const playTone = () => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.setValueAtTime(660, ctx.currentTime);
+        osc.frequency.setValueAtTime(880, ctx.currentTime + 0.22);
+        gain.gain.setValueAtTime(0, ctx.currentTime);
+        gain.gain.linearRampToValueAtTime(0.18, ctx.currentTime + 0.03);
+        gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.55);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.58);
+        osc.onended = () => { osc.disconnect(); gain.disconnect(); };
+      };
+      playTone();
+      ringTimerRef.current = setInterval(playTone, 1200);
+    } catch { /* autoplay may be blocked */ }
+  }, []);
+
+  const startRinging = useCallback((name: string, targetId: string, ringtoneUrl?: string) => {
+    stopRinging();
+    createNativeMessage(name || '\u6765\u7535', '\u9080\u8bf7\u4f60\u8bed\u97f3\u901a\u8bdd', { chatId: targetId });
+    if (document.visibilityState === 'hidden' && 'Notification' in window && Notification.permission === 'granted') {
+      try {
+        const notification = new Notification(name || '\u6765\u7535', {
+          body: '\u9080\u8bf7\u4f60\u8bed\u97f3\u901a\u8bdd',
+          icon: './favicon.svg',
+          tag: `call-${targetId}`,
+          data: { url: `#/chat/${targetId}` },
+        });
+        notification.onclick = () => {
+          window.focus();
+          window.location.hash = `#/chat/${targetId}`;
+          notification.close();
+        };
+      } catch { /* ignore */ }
+    }
+
+    const customUrl = ringtoneUrl || user?.callRingtoneUrl || localStorage.getItem('echo-call-ringtone-url') || '';
+    if (customUrl) {
+      try {
+        const audio = new Audio(assetUrl(customUrl));
+        audio.loop = true;
+        audio.volume = 0.9;
+        ringtoneRef.current = audio;
+        audio.play().catch(() => playDefaultRing());
+        return;
+      } catch { /* fallback */ }
+    }
+    playDefaultRing();
+  }, [playDefaultRing, stopRinging, user?.callRingtoneUrl]);
+
   const cleanup = useCallback(() => {
+    stopRinging();
     if (callTimeoutRef.current) { clearTimeout(callTimeoutRef.current); callTimeoutRef.current = null; }
     if (peerConnectionRef.current) { peerConnectionRef.current.close(); peerConnectionRef.current = null; }
     if (localStreamRef.current) { localStreamRef.current.getTracks().forEach(t => t.stop()); localStreamRef.current = null; }
     if (audioRef.current) { audioRef.current.srcObject = null; }
     pendingCandidatesRef.current = [];
+    connectedAtRef.current = null;
+    loggedCallRef.current = false;
     setCallStatus('idle');
     setIsMuted(false);
     setPeerId('');
@@ -95,6 +184,24 @@ export function CallProvider({ children }: { children: ReactNode }) {
     pendingCandidatesRef.current = [];
   }, []);
 
+  const markConnected = useCallback(() => {
+    stopRinging();
+    connectedAtRef.current = Date.now();
+    loggedCallRef.current = false;
+    setCallStatus('connected');
+  }, [stopRinging]);
+
+  const emitCallRecord = useCallback((targetId: string) => {
+    if (!socket || !targetId || !connectedAtRef.current || loggedCallRef.current) return;
+    const seconds = Math.max(1, Math.round((Date.now() - connectedAtRef.current) / 1000));
+    loggedCallRef.current = true;
+    socket.emit('message:send', {
+      receiverId: targetId,
+      type: 'call',
+      content: `语音通话 ${formatCallDuration(seconds)}`,
+    });
+  }, [socket]);
+
   // Outgoing call
   const startCall = useCallback(async (targetId: string) => {
     const readinessError = getCallReadinessError();
@@ -119,13 +226,18 @@ export function CallProvider({ children }: { children: ReactNode }) {
 
       socket.emit('call:request', {
         receiverId: targetId,
-        callerName: user?.nickname || user?.username || '未知',
+        callerName: user?.nickname || user?.username || '\u672a\u77e5',
         callerAvatar: user?.avatar || '',
       }, (res: any) => {
         if (!res?.ok) {
-          toast(res?.message || '呼叫失败', 'error');
+          toast(res?.message || '\u547c\u53eb\u5931\u8d25', 'error');
           cleanup();
+          return;
         }
+        const waitingUrl = user?.callRingtoneMode === 'mine'
+          ? user?.callRingtoneUrl
+          : (res?.receiverRingtoneUrl || user?.callRingtoneUrl);
+        startRinging('\u7b49\u5f85\u63a5\u542c', targetId, waitingUrl);
       });
 
       callTimeoutRef.current = setTimeout(() => {
@@ -139,7 +251,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
       toast('麦克风权限被拒绝，请检查设置', 'error');
       setCallStatus('idle');
     }
-  }, [socket, user, toast, cleanup]);
+  }, [socket, user, toast, cleanup, startRinging]);
 
   const acceptCall = useCallback(async () => {
     const readinessError = getCallReadinessError();
@@ -153,7 +265,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       localStreamRef.current = stream;
-      setCallStatus('connected');
+      markConnected();
       socket?.emit('call:accept', { targetId: peerId });
       createPeerConnection(peerId);
     } catch {
@@ -161,7 +273,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
       socket?.emit('call:reject', { targetId: peerId });
       cleanup();
     }
-  }, [socket, peerId, toast, createPeerConnection, cleanup]);
+  }, [socket, peerId, toast, createPeerConnection, cleanup, markConnected]);
 
   const rejectCall = useCallback(() => {
     socket?.emit('call:reject', { targetId: peerId });
@@ -169,9 +281,10 @@ export function CallProvider({ children }: { children: ReactNode }) {
   }, [socket, peerId, cleanup]);
 
   const hangupCall = useCallback(() => {
+    emitCallRecord(peerId);
     socket?.emit('call:hangup', { targetId: peerId });
     cleanup();
-  }, [socket, peerId, cleanup]);
+  }, [socket, peerId, cleanup, emitCallRecord]);
 
   const toggleMute = useCallback(() => {
     if (localStreamRef.current) {
@@ -187,17 +300,18 @@ export function CallProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!socket) return;
 
-    const onInvite = (data: { senderId: string; callerName: string; callerAvatar: string }) => {
+    const onInvite = (data: { senderId: string; callerName: string; callerAvatar: string; receiverRingtoneUrl?: string; callerRingtoneUrl?: string }) => {
       if (callStatusRef.current !== 'idle') return; // busy
       setPeerId(data.senderId);
-      setCallerName(data.callerName || '未知');
+      setCallerName(data.callerName || '\u672a\u77e5');
       setCallerAvatar(data.callerAvatar || '');
       setCallStatus('receiving');
+      startRinging(data.callerName || '\u6765\u7535', data.senderId, data.receiverRingtoneUrl || user?.callRingtoneUrl);
     };
 
     const onAccepted = async () => {
       if (callTimeoutRef.current) { clearTimeout(callTimeoutRef.current); callTimeoutRef.current = null; }
-      setCallStatus('connected');
+      markConnected();
       const pc = createPeerConnection(peerId);
       try {
         const offer = await pc.createOffer();
@@ -248,7 +362,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
       socket.off('call:hangedup', onHangedup);
       socket.off('webrtc:signal', onSignal);
     };
-  }, [socket, peerId, createPeerConnection, cleanup, drainPendingCandidates, toast]);
+  }, [socket, peerId, createPeerConnection, cleanup, drainPendingCandidates, toast, markConnected, startRinging, user?.callRingtoneUrl]);
 
   return (
     <CallContext.Provider value={{ callStatus, startCall }}>

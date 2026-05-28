@@ -38,7 +38,13 @@ export const videoUpload = multer({
 export const upload = multer({
   storage,
   fileFilter,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB (图片/音频)
+  limits: { fileSize: 30 * 1024 * 1024 }, // 30MB (清晰图片/GIF/音频)
+});
+
+export const ringtoneUpload = multer({
+  storage,
+  fileFilter,
+  limits: { fileSize: 80 * 1024 * 1024 }, // 80MB for custom call ringtones
 });
 
 export function getUploadUrl(filename: string): string {

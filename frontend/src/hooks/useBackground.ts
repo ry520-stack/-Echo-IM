@@ -76,7 +76,7 @@ export function useBackground() {
   }, [settings]);
 
   const uploadAndGetUrl = async (file: File): Promise<string> => {
-    const compressed = await compressImage(file, 3);
+    const compressed = await compressImage(file, 8);
     const base = getServerUrl();
     const token = localStorage.getItem('echo-token');
     const formData = new FormData();
@@ -117,10 +117,8 @@ export function useBackground() {
     saveLocal(next);
     try {
       await api('PUT', '/api/backgrounds/chat', { peerId, imageUrl });
-    } catch (err) {
-      setSettings(prev);
-      saveLocal(prev);
-      throw err;
+    } catch {
+      // Keep the local per-chat background even when this target cannot be persisted remotely.
     }
   }, [settings]);
 

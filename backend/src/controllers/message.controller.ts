@@ -8,7 +8,7 @@ export async function getMessages(req: Request, res: Response) {
   const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
 
   if (!userId || typeof userId !== 'string') {
-    return res.status(400).json({ error: 'userId 为必填' });
+    return res.status(400).json({ error: 'userId is required' });
   }
 
   try {
@@ -16,7 +16,7 @@ export async function getMessages(req: Request, res: Response) {
     res.json(messages);
   } catch (e: any) {
     console.error('[getMessages Error]', e);
-    res.status(500).json({ error: '获取消息失败，请稍后重试' });
+    res.status(500).json({ error: 'Failed to get messages' });
   }
 }
 
@@ -26,7 +26,7 @@ export async function getGroupMessages(req: Request, res: Response) {
   const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
 
   if (!groupId || typeof groupId !== 'string') {
-    return res.status(400).json({ error: 'groupId 为必填' });
+    return res.status(400).json({ error: 'groupId is required' });
   }
 
   try {
@@ -34,7 +34,7 @@ export async function getGroupMessages(req: Request, res: Response) {
     res.json(messages);
   } catch (e: any) {
     console.error('[getGroupMessages Error]', e);
-    res.status(500).json({ error: '获取消息失败，请稍后重试' });
+    res.status(500).json({ error: 'Failed to get group messages' });
   }
 }
 
@@ -44,7 +44,7 @@ export async function getConversations(req: Request, res: Response) {
     res.json(conversations);
   } catch (e: any) {
     console.error('[getConversations Error]', e);
-    res.status(500).json({ error: '获取会话失败，请稍后重试' });
+    res.status(500).json({ error: 'Failed to get conversations' });
   }
 }
 
@@ -52,7 +52,7 @@ export async function recallMessage(req: Request, res: Response) {
   const { id } = req.params;
   try {
     const msg = await messageService.recallMessage(id, req.userId);
-    // 广播撤回事件给相关用户
+    // 广播撤回事件给相关用�?
     const io = getIO();
     if (io) {
       if (msg.receiverId) {
@@ -70,44 +70,46 @@ export async function recallMessage(req: Request, res: Response) {
 export async function consecutiveDays(req: Request, res: Response) {
   const { peerId } = req.query;
   if (!peerId || typeof peerId !== 'string') {
-    return res.status(400).json({ error: 'peerId 为必填' });
+    return res.status(400).json({ error: 'peerId is required' });
   }
   try {
     const days = await messageService.getConsecutiveDays(req.userId, peerId);
     res.json({ days, userIdA: req.userId, userIdB: peerId });
   } catch (e: any) {
     console.error('[consecutiveDays Error]', e);
-    res.status(500).json({ error: '获取连续天数失败' });
+    res.status(500).json({ error: 'Failed to get consecutive days' });
   }
 }
 
 export async function searchMessages(req: Request, res: Response) {
-  const q = req.query.q as string;
-  if (!q) {
-    return res.status(400).json({ error: 'q 为必填' });
+  const q = (req.query.q as string | undefined)?.trim();
+  const peerId = req.query.peerId as string | undefined;
+  const groupId = req.query.groupId as string | undefined;
+  const date = req.query.date as string | undefined;
+  if (!q && !date) {
+    return res.status(400).json({ error: 'q or date is required' });
   }
   try {
-    const messages = await messageService.searchMessages(req.userId, q);
+    const messages = await messageService.searchMessages(req.userId, { query: q, peerId, groupId, date });
     res.json(messages);
   } catch (e: any) {
     console.error('[searchMessages Error]', e);
-    res.status(500).json({ error: '搜索失败，请稍后重试' });
+    res.status(500).json({ error: 'Search failed' });
   }
 }
 
 export async function markRead(req: Request, res: Response) {
-  const { peerId } = req.body;
-  if (!peerId) return res.status(400).json({ error: 'peerId 为必填' });
+  const { peerId, groupId } = req.body;
+  if (!peerId && !groupId) return res.status(400).json({ error: 'peerId or groupId is required' });
   try {
-    const count = await messageService.markAllRead(req.userId, peerId);
+    const count = await messageService.markAllRead(req.userId, peerId, groupId);
     res.json({ ok: true, count });
   } catch (e: any) {
     console.error('[markRead Error]', e);
-    res.status(500).json({ error: '标记已读失败' });
+    res.status(500).json({ error: '����Ѷ�ʧ��' });
   }
 }
-
-// ——— Message hiding (soft-delete for requesting user only) ———
+// ——�?Message hiding (soft-delete for requesting user only) ——�?
 
 export async function deleteMessage(req: Request, res: Response) {
   const { id } = req.params;
@@ -122,27 +124,27 @@ export async function deleteMessage(req: Request, res: Response) {
 export async function batchDelete(req: Request, res: Response) {
   const { ids } = req.body;
   if (!ids || !Array.isArray(ids) || ids.length === 0) {
-    return res.status(400).json({ error: 'ids 为必填（字符串数组）' });
+    return res.status(400).json({ error: 'ids is required' });
   }
   if (ids.length > 100) {
-    return res.status(400).json({ error: '单次最多删除100条消息' });
+    return res.status(400).json({ error: 'Max 100 messages per batch' });
   }
   try {
     const count = await messageService.batchHideMessages(req.userId, ids);
     res.json({ ok: true, count });
   } catch (e: any) {
     console.error('[batchDelete Error]', e);
-    res.status(500).json({ error: '批量删除失败' });
+    res.status(500).json({ error: 'Batch delete failed' });
   }
 }
 
 export async function clearConversation(req: Request, res: Response) {
   const { peerId, groupId } = req.body;
   if (!peerId && !groupId) {
-    return res.status(400).json({ error: 'peerId 或 groupId 为必填' });
+    return res.status(400).json({ error: 'peerId or groupId is required' });
   }
   if (peerId && groupId) {
-    return res.status(400).json({ error: 'peerId 和 groupId 只能提供一个' });
+    return res.status(400).json({ error: 'Only one of peerId or groupId can be provided' });
   }
   try {
     if (peerId) {

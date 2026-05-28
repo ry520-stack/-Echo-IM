@@ -1,4 +1,4 @@
-import { useState, type ComponentType } from 'react';
+import { useEffect, useState, type ComponentType } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -13,6 +13,7 @@ import {
   Users,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useSocket } from '../contexts/SocketContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { api } from '../api/client';
 import GooeyToggle from './GooeyToggle';
@@ -35,10 +36,13 @@ interface NavItem {
 
 export default function SidebarDrawer({ open, onClose }: Props) {
   const { user, logout, updateUser } = useAuth();
+  const { socket } = useSocket();
   const { theme, toggleTheme } = useTheme();
   const nav = useNavigate();
   const [editingStatus, setEditingStatus] = useState(false);
   const [statusText, setStatusText] = useState(user?.status || '');
+  const [unreadMoments, setUnreadMoments] = useState(() => localStorage.getItem('echo-moments-has-unread') === 'true');
+  const [unreadFriends, setUnreadFriends] = useState(false);
 
   const navigate = (path: string, beforeNavigate?: () => void) => {
     beforeNavigate?.();
@@ -58,8 +62,23 @@ export default function SidebarDrawer({ open, onClose }: Props) {
     }
   };
 
-  const lastMomentsRead = Number(localStorage.getItem('echo-moments-last-read') || '0');
-  const hasUnreadMoments = localStorage.getItem('echo-moments-has-unread') === 'true' && Date.now() - lastMomentsRead > 60000;
+  useEffect(() => {
+    if (!socket) return;
+    const onMoment = (data: { userId?: string }) => {
+      if (data.userId === user?.id) return;
+      localStorage.setItem('echo-moments-has-unread', 'true');
+      setUnreadMoments(true);
+    };
+    const onFriendRequest = () => setUnreadFriends(true);
+    socket.on('moment:new', onMoment);
+    socket.on('friend:request', onFriendRequest);
+    socket.on('friend:accepted', onFriendRequest);
+    return () => {
+      socket.off('moment:new', onMoment);
+      socket.off('friend:request', onFriendRequest);
+      socket.off('friend:accepted', onFriendRequest);
+    };
+  }, [socket, user?.id]);
 
   const navItems: NavItem[] = [
     {
@@ -68,6 +87,8 @@ export default function SidebarDrawer({ open, onClose }: Props) {
       path: '/friends',
       Icon: Users,
       accent: 'text-sky-500 bg-sky-50 dark:bg-sky-950/30',
+      unread: unreadFriends,
+      beforeNavigate: () => setUnreadFriends(false),
     },
     {
       title: '动态',
@@ -75,10 +96,11 @@ export default function SidebarDrawer({ open, onClose }: Props) {
       path: '/moments',
       Icon: Bell,
       accent: 'text-violet-500 bg-violet-50 dark:bg-violet-950/30',
-      unread: hasUnreadMoments,
+      unread: unreadMoments,
       beforeNavigate: () => {
         localStorage.setItem('echo-moments-last-read', String(Date.now()));
         localStorage.setItem('echo-moments-has-unread', 'false');
+        setUnreadMoments(false);
       },
     },
     {

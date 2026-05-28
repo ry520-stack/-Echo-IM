@@ -10,13 +10,19 @@ import { assetUrl } from '../utils/assetUrl';
 interface Peer {
   id: string; username: string; nickname: string; avatar: string;
   digitalId: number; lastSeenAt: string; status: string; alias: string;
+  isGroup?: boolean; memberCount?: number;
 }
 interface LastMessage { id: string; content: string; type: string; createdAt: string; senderId: string; }
-interface Conversation { peer: Peer; lastMessage: LastMessage | null; unreadCount: number; lastTime: string; }
+interface Conversation { type?: 'user' | 'group'; peer: Peer; lastMessage: LastMessage | null; unreadCount: number; lastTime: string; }
 interface Friend { id: string; peer: Peer; alias: string; isPinned: boolean; createdAt: string; }
 
 const PINNED_KEY = 'echo-pinned-chats';
 const ARCHIVED_KEY = 'echo-archived-chats';
+const accentBorderClass: Record<string, string> = {
+  purple: 'border-l-primary-500',
+  blue: 'border-l-blue-600',
+  black: 'border-l-gray-900 dark:border-l-gray-100',
+};
 function getPinned(): Set<string> { try { return new Set(JSON.parse(localStorage.getItem(PINNED_KEY) || '[]')); } catch { return new Set(); } }
 function getArchived(): Set<string> { try { return new Set(JSON.parse(localStorage.getItem(ARCHIVED_KEY) || '[]')); } catch { return new Set(); } }
 
@@ -33,8 +39,10 @@ export default function ConversationList({ searchText, searchTab }: { searchText
   const [msgResults, setMsgResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
   const [pinned, setPinned] = useState<Set<string>>(getPinned());
+  const [accentColor, setAccentColor] = useState(() => localStorage.getItem('echo-accent-color') || 'purple');
   const [archived, setArchived] = useState<Set<string>>(getArchived());
   const [friends, setFriends] = useState<Friend[]>([]);
+  const [userResults, setUserResults] = useState<Peer[]>([]);
 
   // 长按 / 滑动状态
   const [swipeId, setSwipeId] = useState<string | null>(null);
@@ -60,14 +68,21 @@ export default function ConversationList({ searchText, searchTab }: { searchText
   useEffect(() => {
     if (searchTab !== 'contacts' || !searchText.trim()) {
       setFriends([]);
+      setUserResults([]);
       return;
     }
     let cancelled = false;
-    api<Friend[]>('GET', '/api/friends')
-      .then(data => { if (!cancelled) setFriends(data); })
-      .catch(() => { if (!cancelled) setFriends([]); });
+    const q = searchText.trim();
+    Promise.all([
+      api<Friend[]>('GET', '/api/friends').catch(() => []),
+      api<Peer[]>('GET', `/api/users/search?q=${encodeURIComponent(q)}`).catch(() => []),
+    ]).then(([friendData, users]) => {
+      if (cancelled) return;
+      setFriends(friendData);
+      setUserResults(users.filter(p => p.id !== user?.id));
+    });
     return () => { cancelled = true; };
-  }, [searchText, searchTab]);
+  }, [searchText, searchTab, user?.id]);
 
   useEffect(() => {
     const asked = localStorage.getItem('echo-notif-asked');
@@ -75,6 +90,15 @@ export default function ConversationList({ searchText, searchTab }: { searchText
   }, [permission]);
 
   const handlePermAgree = () => { requestPermission(); localStorage.setItem('echo-notif-asked', '1'); setShowPermAsk(false); };
+  useEffect(() => {
+    const syncAccent = () => setAccentColor(localStorage.getItem('echo-accent-color') || 'purple');
+    window.addEventListener('storage', syncAccent);
+    window.addEventListener('echo-accent-color-change', syncAccent);
+    return () => {
+      window.removeEventListener('storage', syncAccent);
+      window.removeEventListener('echo-accent-color-change', syncAccent);
+    };
+  }, []);
 
   const togglePin = (peerId: string) => {
     setPinned(prev => { const next = new Set(prev); if (next.has(peerId)) next.delete(peerId); else next.add(peerId); localStorage.setItem(PINNED_KEY, JSON.stringify([...next])); return next; });
@@ -137,7 +161,8 @@ export default function ConversationList({ searchText, searchTab }: { searchText
     return (peer.alias && peer.alias.toLowerCase().includes(s))
       || peer.nickname?.toLowerCase().includes(s)
       || peer.username?.toLowerCase().includes(s)
-      || String(peer.digitalId || '').includes(s);
+      || String(peer.digitalId || '').includes(s)
+      || (peer.isGroup && peer.status?.toLowerCase().includes(s));
   };
 
   const filteredConversations = searchText.trim() && searchTab === 'contacts'
@@ -151,10 +176,22 @@ export default function ConversationList({ searchText, searchTab }: { searchText
           .filter(f => matchPeer(f.peer, searchText.trim()))
           .filter(f => !filteredConversations.some(c => c.peer.id === f.peer.id))
           .map(f => ({
+            type: 'user' as const,
             peer: { ...f.peer, alias: f.alias || f.peer.alias },
             lastMessage: null,
             unreadCount: 0,
             lastTime: f.createdAt,
+          })),
+        ...userResults
+          .filter(peer => matchPeer(peer, searchText.trim()))
+          .filter(peer => !filteredConversations.some(c => c.peer.id === peer.id))
+          .filter(peer => !friends.some(f => f.peer.id === peer.id))
+          .map(peer => ({
+            type: 'user' as const,
+            peer: { ...peer, alias: '' },
+            lastMessage: null,
+            unreadCount: 0,
+            lastTime: '',
           })),
       ]
     : filteredConversations;
@@ -173,10 +210,10 @@ export default function ConversationList({ searchText, searchTab }: { searchText
       if (!targetId) return;
       setConversations(prev => {
         const exists = prev.find(c => c.peer.id === targetId);
-        const content = msg.type === 'image' ? '[图片]' : msg.type === 'voice' ? '[语音]' : msg.content;
+        const content = msg.type === 'image' ? '[图片]' : msg.type === 'voice' ? '[语音]' : msg.type === 'video' ? '[视频]' : msg.type === 'call' ? (msg.content || '[通话]') : msg.content;
         const lastMsg = { id: msg.id, content, type: msg.type, createdAt: msg.createdAt, senderId: msg.senderId };
         if (exists) {
-          const isCurrentChat = chatId === targetId || chatId === exists.peer.digitalId.toString();
+          const isCurrentChat = chatId === targetId || (!exists.peer.isGroup && chatId === exists.peer.digitalId.toString());
           const unreadInc = (msg.senderId !== user?.id && !isCurrentChat) ? 1 : 0;
           return prev.map(c => c.peer.id === targetId ? { ...c, lastMessage: lastMsg, unreadCount: c.unreadCount + unreadInc, lastTime: msg.createdAt } : c).sort((a, b) => new Date(b.lastTime).getTime() - new Date(a.lastTime).getTime());
         }
@@ -184,7 +221,11 @@ export default function ConversationList({ searchText, searchTab }: { searchText
       });
     };
     socket.on('message:receive', handleMessage);
-    return () => { socket.off('message:receive', handleMessage); };
+    socket.on('group:updated', fetchConversations);
+    return () => {
+      socket.off('message:receive', handleMessage);
+      socket.off('group:updated', fetchConversations);
+    };
   }, [socket, user?.id, chatId, fetchConversations]);
 
   const getDisplayName = (peer: Peer) => peer.alias || peer.nickname || peer.username;
@@ -199,8 +240,19 @@ export default function ConversationList({ searchText, searchTab }: { searchText
   };
   const formatLastMsg = (msg: LastMessage | null) => {
     if (!msg) return '';
-    if (msg.type === 'image') return '[图片]'; if (msg.type === 'voice') return `[语音 ${msg.content}"]`;
+    if (msg.type === 'image') return '[图片]';
+    if (msg.type === 'voice') return '[语音]';
+    if (msg.type === 'video') return '[视频]';
+    if (msg.type === 'call') return msg.content || '[通话]';
     return msg.content.length > 20 ? msg.content.slice(0, 20) + '...' : msg.content;
+  };
+
+  const formatSearchMsg = (msg: any) => {
+    if (msg.type === 'image') return '[图片]';
+    if (msg.type === 'voice') return '[语音]';
+    if (msg.type === 'video') return '[视频]';
+    if (msg.type === 'call') return msg.content || '[通话]';
+    return msg.content;
   };
 
   const bgUrl = getBg('conversation');
@@ -237,8 +289,8 @@ export default function ConversationList({ searchText, searchTab }: { searchText
             <p className="text-xs text-gray-400 text-center py-4">未找到相关消息</p>
           ) : msgResults.map((msg: any) => (
             <div key={msg.id} onClick={() => nav(`/chat/${msg.groupId || (msg.senderId === user?.id ? msg.receiverId : msg.senderId)}`)} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer mb-1">
-              <p className="text-xs text-gray-500 truncate">{msg.sender?.nickname || msg.sender?.username}</p>
-              <p className="text-sm text-gray-700 dark:text-gray-300 truncate">{msg.content}</p>
+              <p className="text-xs text-gray-500 truncate">{msg.group?.name ? `${msg.group.name} · ` : ''}{msg.sender?.nickname || msg.sender?.username}</p>
+              <p className="text-sm text-gray-700 dark:text-gray-300 truncate">{formatSearchMsg(msg)}</p>
             </div>
           ))}
         </div>
@@ -269,8 +321,8 @@ export default function ConversationList({ searchText, searchTab }: { searchText
               .sort((a, b) => (pinned.has(a.peer.id) ? -1 : 0) - (pinned.has(b.peer.id) ? -1 : 0))
               .filter(c => !archived.has(c.peer.id) || searchText.trim())
               .map((conv) => {
-                const isActive = chatId === conv.peer.digitalId.toString() || chatId === conv.peer.id;
-                const isOnline = onlineUsers.has(conv.peer.id);
+                const isActive = chatId === conv.peer.id || (!conv.peer.isGroup && chatId === conv.peer.digitalId.toString());
+                const isOnline = !conv.peer.isGroup && onlineUsers.has(conv.peer.id);
                 const isPinned = pinned.has(conv.peer.id);
                 const isSwiping = swipeId === conv.peer.id;
                 return (
@@ -284,7 +336,7 @@ export default function ConversationList({ searchText, searchTab }: { searchText
                         if (contextMenu) { setContextMenu(null); return; }
                         if (Math.abs(swipeXRef.current) < 5) {
                           setConversations(prev => prev.map(c => c.peer.id === conv.peer.id ? { ...c, unreadCount: 0 } : c));
-                          nav(`/chat/${conv.peer.digitalId}`);
+                          nav(`/chat/${conv.peer.isGroup ? conv.peer.id : conv.peer.digitalId}`);
                         }
                       }}
                       onTouchStart={(e) => handleTouchStart(e, conv.peer.id)}
@@ -292,7 +344,7 @@ export default function ConversationList({ searchText, searchTab }: { searchText
                       onTouchEnd={(e) => handleTouchEnd(e, conv.peer.id)}
                       onTouchCancel={handleTouchCancel}
                       style={{ touchAction: 'pan-y', ...(isSwiping ? { transform: `translateX(${swipeX}px)`, transition: 'none' } : { transform: 'translateX(0)', transition: 'transform 0.3s ease' }) }}
-                  className={`relative flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors select-none ${hasBg ? `backdrop-blur-md ${isActive ? 'bg-white/70 dark:bg-white/10' : 'bg-white/40 hover:bg-white/60 dark:bg-white/5 dark:hover:bg-white/10'} border-b border-white/10 dark:border-white/5` : `hover:bg-gray-100 dark:hover:bg-gray-800/50 ${isActive ? 'bg-primary-50 dark:bg-primary-900/20' : ''}`} ${isPinned ? 'border-l-2 border-purple-400' : ''}`}
+                  className={`relative flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors select-none ${hasBg ? `backdrop-blur-md ${isActive ? 'bg-white/70 dark:bg-white/10' : 'bg-white/40 hover:bg-white/60 dark:bg-white/5 dark:hover:bg-white/10'} border-b border-white/10 dark:border-white/5` : `hover:bg-gray-100 dark:hover:bg-gray-800/50 ${isActive ? 'bg-primary-50 dark:bg-primary-900/20' : ''}`} ${isPinned ? `border-l-2 ${accentBorderClass[accentColor] || accentBorderClass.purple}` : ''}`}
                     >
                       <div className="relative shrink-0">
                         <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary-100 text-lg font-bold text-primary-600 dark:bg-primary-900/30 dark:text-primary-400">

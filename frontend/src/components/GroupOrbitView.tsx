@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Users, Crown, Shield, MessageCircle, Image as ImageIcon } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { CalendarDays, Search, Users, Crown, Shield, MessageCircle, Image as ImageIcon } from 'lucide-react';
 import { api } from '../api/client';
 import { assetUrl } from '../utils/assetUrl';
 
@@ -23,6 +24,7 @@ interface GroupDetail {
 }
 
 export default function GroupOrbitView({ groupId, groupName, onClose }: { groupId: string; groupName?: string; onClose: () => void }) {
+  const navigate = useNavigate();
   const [group, setGroup] = useState<GroupDetail | null>(null);
 
   useEffect(() => {
@@ -46,8 +48,15 @@ export default function GroupOrbitView({ groupId, groupName, onClose }: { groupI
             {group?.avatar ? <img src={assetUrl(group.avatar)} alt="" className="h-full w-full object-cover" /> : name[0]?.toUpperCase()}
           </div>
           <h2 className="mt-4 max-w-full truncate text-3xl font-extrabold text-gray-900 dark:text-gray-100">{name}</h2>
-          <p className="mt-2 text-sm text-gray-400">{group?.memberCount || 0} 人 · {group?.role === 'owner' ? '我是群主' : group?.role === 'admin' ? '我是管理员' : '我是成员'}</p>
-          {group?.notice && <p className="mt-4 w-full rounded-2xl bg-gray-50 p-4 text-sm leading-6 text-gray-600 dark:bg-gray-900 dark:text-gray-300">{group.notice}</p>}
+          <p className="mt-2 text-sm text-gray-400">{group?.memberCount || 0} 人 · {group?.role === 'owner' ? '我是群主' : group?.role === 'admin' ? '我是管理员' : '我是成员'}</p>          {group?.notice && <p className="mt-4 w-full rounded-2xl bg-gray-50 p-4 text-sm leading-6 text-gray-600 dark:bg-gray-900 dark:text-gray-300">{group.notice}</p>}
+          <div className="mt-5 grid w-full grid-cols-2 gap-3">
+            <button onClick={() => navigate(`/search?groupId=${groupId}&title=${encodeURIComponent(name)}`)} className="flex items-center justify-center gap-2 rounded-2xl bg-gray-100 py-3 text-sm font-medium text-gray-700 dark:bg-gray-800 dark:text-gray-200">
+              <Search size={16} /> {'\u641c\u7d22\u804a\u5929\u8bb0\u5f55'}
+            </button>
+            <button onClick={() => navigate(`/search?groupId=${groupId}&title=${encodeURIComponent(name)}`)} className="flex items-center justify-center gap-2 rounded-2xl bg-gray-100 py-3 text-sm font-medium text-gray-700 dark:bg-gray-800 dark:text-gray-200">
+              <CalendarDays size={16} /> {'\u6309\u65e5\u671f\u67e5\u770b'}
+            </button>
+          </div>
         </section>
 
         <section className="mt-8">

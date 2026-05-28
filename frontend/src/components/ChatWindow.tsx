@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Image, Clock, Send, Smile, Trash2 } from 'lucide-react';
@@ -6,7 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useSocket } from '../contexts/SocketContext';
 import { useToast } from '../contexts/ToastContext';
 import { api, getServerUrl } from '../api/client';
-import { compressImage, compressEmoji } from '../utils/compressImage';
+import { compressEmoji, prepareChatImage } from '../utils/compressImage';
 import { is5Plus } from '../utils/env';
 import { useBackground } from '../hooks/useBackground';
 import Modal from './Modal';
@@ -79,6 +79,12 @@ const ERROR_MAP: Record<string, string> = {
   '对方开启了好友验证，你还不是他（她）好友': '对方开启了好友验证，你还不是他（她）好友',
 };
 
+const accentRingClass: Record<string, string> = {
+  purple: 'ring-primary-500',
+  blue: 'ring-blue-600',
+  black: 'ring-gray-900 dark:ring-gray-100',
+};
+
 export default function ChatWindow({ peerId, peer, chatType, groupName, groupAvatar, onBack, initialOrbit = false }: Props) {
   const { user } = useAuth();
   const { socket, connected, isUserOnline } = useSocket();
@@ -86,7 +92,9 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
   const isGroup = chatType === 'group';
   const { getBg, getChatBg, setChatBg: saveChatBg, uploadAndGetUrl } = useBackground();
   const { startCall } = useCall();
-  const { startRecord, stopRecord, isRecording: recorderActive } = useAudioRecorder();
+  const { startRecord, stopRecord, stopRecordPath, isRecording: recorderActive } = useAudioRecorder();
+  const [accentColor, setAccentColor] = useState(() => localStorage.getItem('echo-accent-color') || 'purple');
+  const selectedRing = accentRingClass[accentColor] || accentRingClass.purple;
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(true);
@@ -107,6 +115,11 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
   const [emojiManageMode, setEmojiManageMode] = useState(false);
   const [emojiExpanded, setEmojiExpanded] = useState(false);
   const [emojiPage, setEmojiPage] = useState(0);
+  const [emojiDragX, setEmojiDragX] = useState(0);
+  const [emojiDragging, setEmojiDragging] = useState(false);
+  const [emojiManageFlash, setEmojiManageFlash] = useState(false);
+  const emojiDragIdRef = useRef<string | null>(null);
+  const emojiMovedRef = useRef(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [selectedEmojis, setSelectedEmojis] = useState<Set<string>>(new Set());
   const emojisCachedRef = useRef(false);
@@ -117,7 +130,7 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
   const [msgContextMenu, setMsgContextMenu] = useState<{ msgId: string; x: number; y: number; isMine: boolean; createdAt: string; type?: string; content?: string } | null>(null);
   const msgLongPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoCollapseRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const emojiSwipeRef = useRef({ sx: 0, sy: 0 });
+  const emojiSwipeRef = useRef({ sx: 0, sy: 0, active: false });
 
   // 10s auto-collapse timer
   useEffect(() => {
@@ -141,7 +154,8 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
   const fetchEmojis = async (force = false) => {
     if (!force && emojisCachedRef.current && emojis.length > 0) return;
     try {
-      setEmojis(await api<any[]>('GET', '/api/emojis'));
+      const items = await api<any[]>('GET', '/api/emojis');
+      setEmojis(applyEmojiOrder(items));
       emojisCachedRef.current = true;
     } catch { /* */ }
   };
@@ -151,11 +165,59 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
 
   const emojiPageSize = emojiExpanded ? 12 : 4;
   const emojiMaxPage = Math.max(0, Math.ceil(emojis.length / emojiPageSize) - 1);
-  const visibleEmojis = emojis.slice(emojiPage * emojiPageSize, emojiPage * emojiPageSize + emojiPageSize);
+  const emojiPages = useMemo(() => {
+    const pages: { id: string; imageUrl: string; name: string }[][] = [];
+    for (let i = 0; i < emojis.length; i += emojiPageSize) pages.push(emojis.slice(i, i + emojiPageSize));
+    return pages;
+  }, [emojis, emojiPageSize]);
+
+  const applyEmojiOrder = useCallback((items: { id: string; imageUrl: string; name: string }[]) => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('echo-emoji-order') || '[]') as string[];
+      if (!Array.isArray(saved) || saved.length === 0) return items;
+      const rank = new Map(saved.map((id, index) => [id, index]));
+      return [...items].sort((a, b) => {
+        const ai = rank.has(a.id) ? rank.get(a.id)! : Number.MAX_SAFE_INTEGER;
+        const bi = rank.has(b.id) ? rank.get(b.id)! : Number.MAX_SAFE_INTEGER;
+        return ai - bi;
+      });
+    } catch {
+      return items;
+    }
+  }, []);
+
+  const reorderEmojis = (next: { id: string; imageUrl: string; name: string }[]) => {
+    setEmojis(next);
+    localStorage.setItem('echo-emoji-order', JSON.stringify(next.map(e => e.id)));
+  };
+
+  const moveEmojiById = (fromId: string, toId: string) => {
+    if (fromId === toId) return;
+    setEmojis(prev => {
+      const from = prev.findIndex(e => e.id === fromId);
+      const to = prev.findIndex(e => e.id === toId);
+      if (from < 0 || to < 0 || from === to) return prev;
+      const next = [...prev];
+      const [item] = next.splice(from, 1);
+      next.splice(to, 0, item);
+      localStorage.setItem('echo-emoji-order', JSON.stringify(next.map(e => e.id)));
+      return next;
+    });
+  };
 
   useEffect(() => {
     setEmojiPage(page => Math.min(page, emojiMaxPage));
   }, [emojiMaxPage]);
+
+  useEffect(() => {
+    const syncAccent = () => setAccentColor(localStorage.getItem('echo-accent-color') || 'purple');
+    window.addEventListener('storage', syncAccent);
+    window.addEventListener('echo-accent-color-change', syncAccent);
+    return () => {
+      window.removeEventListener('storage', syncAccent);
+      window.removeEventListener('echo-accent-color-change', syncAccent);
+    };
+  }, []);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const topSentinelRef = useRef<HTMLDivElement>(null);
@@ -220,11 +282,99 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
     const next = !readReceiptOn;
     setReadReceiptOn(next);
     localStorage.setItem(readReceiptKey, String(next));
+    localStorage.setItem('echo-read-receipt-global', String(next));
+    api('PUT', '/api/users/me', { readReceiptsEnabled: next }).catch(() => {});
   };
 
   const closePanels = () => {
     setActivePanel(null);
     setShowShootMenu(false);
+  };
+
+  const emitUploadedMessage = (url: string, type: 'image' | 'voice' | 'video') => {
+    if (!socket || !user || !url) return;
+    const tempId = `temp-${type}-${Date.now()}`;
+    const optimisticMsg: Message = {
+      id: tempId,
+      senderId: user.id,
+      receiverId: isGroup ? null : peerId,
+      groupId: isGroup ? peerId : null,
+      content: url,
+      type,
+      isRecalled: false,
+      replyToId: replyTo?.id || null,
+      replyTo: replyTo ? { id: replyTo.id, content: replyTo.content, type: replyTo.type, sender: replyTo.sender } : null,
+      createdAt: new Date().toISOString(),
+      sender: { id: user.id, username: user.username, nickname: user.nickname || user.username, avatar: user.avatar || '' },
+    };
+    setMessages(prev => [...prev, optimisticMsg]);
+    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+
+    socket.emit('message:send', {
+      ...(isGroup ? { groupId: peerId } : { receiverId: peerId }),
+      content: url,
+      type,
+      replyToId: replyTo?.id || undefined,
+    }, (res: any) => {
+      if (res?.error) {
+        toast(ERROR_MAP[res.error] || res.error, 'error');
+        setMessages(prev => prev.filter(m => m.id !== tempId));
+      } else if (res?.ok && res.message) {
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...res.message, sender: optimisticMsg.sender } : m));
+      }
+    });
+    setReplyTo(null);
+  };
+
+  const uploadPlusPath = (path: string, endpoint: string): Promise<{ url: string }> => {
+    return new Promise((resolve, reject) => {
+      const plus = (window as any).plus;
+      if (!plus?.uploader) {
+        reject(new Error('当前 App 不支持原生上传'));
+        return;
+      }
+      const base = getServerUrl();
+      const token = localStorage.getItem('echo-token');
+      const upload = plus.uploader.createUpload(
+        base + endpoint,
+        { method: 'POST' },
+        (task: any, status: number) => {
+          if (status < 200 || status >= 300) {
+            reject(new Error(`上传失败 (${status})`));
+            return;
+          }
+          try {
+            const data = JSON.parse(task.responseText || '{}');
+            if (!data.url) throw new Error(data.error || '上传失败');
+            resolve(data);
+          } catch (e: any) {
+            reject(new Error(e.message || '上传失败'));
+          }
+        },
+      );
+      if (token) upload.setRequestHeader('Authorization', `Bearer ${token}`);
+      try {
+        upload.addFile(path, { key: 'file' });
+      } catch {
+        try {
+          upload.addFile(plus.io.convertLocalFileSystemURL(path), { key: 'file' });
+        } catch {
+          reject(new Error('读取本地文件失败'));
+          return;
+        }
+      }
+      upload.start();
+    });
+  };
+
+  const sendPlusPath = async (path: string, endpoint: string, type: 'image' | 'voice' | 'video') => {
+    try {
+      toast('正在发送...', 'info');
+      const data = await uploadPlusPath(path, endpoint);
+      emitUploadedMessage(data.url, type);
+    } catch (e: any) {
+      toast(e.message || '发送失败', 'error');
+    }
   };
 
   // 5+ 拍照
@@ -233,18 +383,7 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
     const camera = plus.camera.getCamera();
     camera.captureImage(
       (path: string) => {
-        plus.io.resolveLocalFileSystemURL(path, (entry: any) => {
-          entry.file((file: any) => {
-            const reader = new FileReader();
-            reader.onload = () => {
-              const blob = new Blob([reader.result as ArrayBuffer], { type: file.type || 'image/jpeg' });
-              const f = new File([blob], `photo_${Date.now()}.jpg`, { type: 'image/jpeg' });
-              sendImage(f);
-            };
-            reader.onerror = () => toast('读取照片失败', 'error');
-            reader.readAsArrayBuffer(file);
-          });
-        }, () => toast('照片文件不存在', 'error'));
+        sendPlusPath(path, '/api/upload/chat-image', 'image');
       },
       (e: any) => {
         if (e.code !== 12) toast('无法打开相机，请检查权限', 'error');
@@ -259,18 +398,7 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
     const camera = plus.camera.getCamera();
     camera.startVideoCapture(
       (path: string) => {
-        plus.io.resolveLocalFileSystemURL(path, (entry: any) => {
-          entry.file((file: any) => {
-            const reader = new FileReader();
-            reader.onload = () => {
-              const blob = new Blob([reader.result as ArrayBuffer], { type: file.type || 'video/mp4' });
-              const f = new File([blob], `video_${Date.now()}.mp4`, { type: 'video/mp4' });
-              sendVideo(f);
-            };
-            reader.onerror = () => toast('读取视频失败', 'error');
-            reader.readAsArrayBuffer(file);
-          });
-        }, () => toast('视频文件不存在', 'error'));
+        sendPlusPath(path, '/api/upload/video', 'video');
       },
       (e: any) => {
         if (e.code !== 12) toast('无法打开相机，请检查权限', 'error');
@@ -280,7 +408,7 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
   };
 
   const sendImage = async (file: File) => {
-    if (file.size > 10 * 1024 * 1024) { toast('图片不能超过 10MB', 'error'); return; }
+    if (file.size > 30 * 1024 * 1024) { toast('图片不能超过 30MB', 'error'); return; }
     const tempId = 'temp-img-' + Date.now();
     const localUrl = URL.createObjectURL(file);
     const optimisticMsg: Message | null = socket && user ? {
@@ -301,7 +429,7 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
       setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
     }
     try {
-      const uploadFile = await compressImage(file);
+      const uploadFile = await prepareChatImage(file);
       const base = getServerUrl();
       const token = localStorage.getItem('echo-token');
       const formData = new FormData();
@@ -464,8 +592,11 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
     readyRef.current = false;
     fetchMessages();
     // Mark messages as read when opening chat
-    if (!isGroup && peerId) {
-      api('PUT', '/api/messages/read', { peerId }).catch(() => {});
+    if (peerId) {
+      const globalReadReceipt = localStorage.getItem('echo-read-receipt-global') !== 'false';
+      if (readReceiptRef.current && globalReadReceipt) {
+        api('PUT', '/api/messages/read', isGroup ? { groupId: peerId } : { peerId }).catch(() => {});
+      }
     }
   }, [peerId, fetchMessages, isGroup]);
 
@@ -676,6 +807,11 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
   };
 
   const getSenderDisplayName = (msg: Message) => groupAliases[msg.senderId] || msg.sender.nickname || msg.sender.username;
+  const getSenderAvatar = (msg: Message) => {
+    if (isGroup) return msg.sender.avatar;
+    if (msg.senderId === peerId) return peer?.avatar || msg.sender.avatar;
+    return msg.sender.avatar;
+  };
 
   // Voice recording (via useAudioRecorder hook)
   const stopRecordingRef = useRef(false); // 防止重复 stop
@@ -692,6 +828,15 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
     } catch {
       toast('无法访问麦克风，请检查权限或确保在安全协议(HTTPS)下运行', 'error');
     }
+  };
+
+  const cancelRecording = async () => {
+    if (recordTimerRef.current) clearInterval(recordTimerRef.current);
+    recordTimerRef.current = null;
+    stopRecordingRef.current = false;
+    setRecording(false);
+    setRecordingDuration(0);
+    await stopRecord().catch(() => {});
   };
 
   // 监听录音时长：60秒自动停止
@@ -720,6 +865,12 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
     setRecording(false);
     setRecordingDuration(0);
     try {
+      if (is5Plus()) {
+        const path = await stopRecordPath();
+        await sendPlusPath(path, '/api/upload/voice', 'voice');
+        return;
+      }
+
       const file = await stopRecord();
       const base = getServerUrl();
       const token = localStorage.getItem('echo-token');
@@ -852,7 +1003,7 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
     chatSwipeRef.current = { sx: e.touches[0].clientX, sy: e.touches[0].clientY };
   };
   const handleChatTouchEnd = (e: React.TouchEvent) => {
-    if (activePanel) return;
+    if (activePanel || recording) return;
     const dx = e.changedTouches[0].clientX - chatSwipeRef.current.sx;
     const dy = Math.abs(e.changedTouches[0].clientY - chatSwipeRef.current.sy);
     if (Math.abs(dx) < 50 || Math.abs(dx) < dy) return;
@@ -867,15 +1018,80 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
 
   const handleEmojiTouchStart = (e: React.TouchEvent) => {
     e.stopPropagation();
-    emojiSwipeRef.current = { sx: e.touches[0].clientX, sy: e.touches[0].clientY };
+    if (emojiManageMode && emojiExpanded) return;
+    emojiSwipeRef.current = { sx: e.touches[0].clientX, sy: e.touches[0].clientY, active: true };
+    setEmojiDragging(true);
+    setEmojiDragX(0);
+  };
+
+  const handleEmojiTouchMove = (e: React.TouchEvent) => {
+    e.stopPropagation();
+    if (emojiManageMode && emojiExpanded) return;
+    if (!emojiSwipeRef.current.active) return;
+    const dx = e.touches[0].clientX - emojiSwipeRef.current.sx;
+    const dy = Math.abs(e.touches[0].clientY - emojiSwipeRef.current.sy);
+    if (Math.abs(dx) < dy) return;
+    const atStart = emojiPage === 0 && dx > 0;
+    const atEnd = emojiPage === emojiMaxPage && dx < 0;
+    setEmojiDragX((atStart || atEnd) ? dx * 0.32 : dx);
   };
 
   const handleEmojiTouchEnd = (e: React.TouchEvent) => {
     e.stopPropagation();
+    if (emojiManageMode && emojiExpanded) return;
     const dx = e.changedTouches[0].clientX - emojiSwipeRef.current.sx;
     const dy = Math.abs(e.changedTouches[0].clientY - emojiSwipeRef.current.sy);
-    if (Math.abs(dx) < 40 || Math.abs(dx) < dy) return;
+    emojiSwipeRef.current.active = false;
+    setEmojiDragging(false);
+    setEmojiDragX(0);
+    if (Math.abs(dx) < 48 || Math.abs(dx) < dy) return;
     setEmojiPage(page => Math.max(0, Math.min(emojiMaxPage, page + (dx < 0 ? 1 : -1))));
+  };
+
+  const toggleEmojiSelected = (id: string) => {
+    setSelectedEmojis(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const sendEmojiImage = (emoji: { id: string; imageUrl: string; name: string }) => {
+    if (emojiManageMode) {
+      toggleEmojiSelected(emoji.id);
+      return;
+    }
+    if (!socket) return;
+    const tempId = 'temp-' + Date.now();
+    const optimisticMsg: Message = {
+      id: tempId,
+      senderId: user!.id,
+      receiverId: isGroup ? null : peerId,
+      groupId: isGroup ? peerId : null,
+      content: emoji.imageUrl,
+      type: 'image',
+      isRecalled: false,
+      replyToId: replyTo?.id || null,
+      replyTo: replyTo ? { id: replyTo.id, content: replyTo.content, type: replyTo.type, sender: replyTo.sender } : null,
+      createdAt: new Date().toISOString(),
+      sender: { id: user!.id, username: user!.username, nickname: user!.nickname || user!.username, avatar: user!.avatar || '' },
+    };
+    setMessages(prev => [...prev, optimisticMsg]);
+    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+    socket.emit('message:send', {
+      ...(isGroup ? { groupId: peerId } : { receiverId: peerId }),
+      content: emoji.imageUrl, type: 'image',
+      replyToId: replyTo?.id || undefined,
+    }, (res: any) => {
+      if (res?.error) {
+        toast(ERROR_MAP[res.error] || res.error, 'error');
+        setMessages(prev => prev.filter(m => m.id !== tempId));
+      } else if (res?.ok && res.message) {
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...res.message, sender: optimisticMsg.sender } : m));
+      }
+    });
+    setReplyTo(null);
   };
 
   const shootMenu = showShootMenu ? createPortal(
@@ -949,8 +1165,8 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
           )}
         </div>
         <div className="flex-1 min-w-0">
-          <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate">{getPeerName()}</h2>
-          <p className="text-xs text-gray-400">
+          <h2 className="text-lg font-semibold leading-tight text-gray-900 dark:text-gray-100 truncate">{getPeerName()}</h2>
+          <p className="text-sm text-gray-500">
             {typingUser ? <span className="text-primary-500">正在输入...</span> :
              isUserOnline(peerId) ? <span className="text-green-500">在线</span> : '离线'}
             {!isGroup && peer?.autoReply && <span className="ml-2 text-amber-500">[自动回复中]</span>}
@@ -982,7 +1198,7 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
         ref={scrollContainerRef}
         className={`flex-1 overflow-y-auto overflow-x-hidden relative z-10 ${effectiveBg ? 'bg-transparent' : 'bg-gray-50 dark:bg-gray-950'}`}
         style={effectiveBg ? { backgroundImage: 'none' } : undefined}
-        onClick={(e) => { if (e.target === e.currentTarget) closePanels(); }}
+        onClick={() => closePanels()}
       >
 
         <div ref={topSentinelRef} className="h-1" />
@@ -997,9 +1213,21 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
             </div>
           </div>
         ) : (
-          <div className="px-3 py-3 space-y-2 relative z-[1] min-h-full" onClick={(e) => { if (e.target === e.currentTarget) closePanels(); }}>
+          <div className="px-3 py-3 space-y-2 relative z-[1] min-h-full">
             {messages.map((msg) => {
               const isMine = msg.senderId === user?.id;
+              const isMediaMessage = msg.type === 'image' || msg.type === 'video';
+
+              if (msg.type === 'pet') {
+                return (
+                  <div key={msg.id} className="flex justify-center px-4 py-1">
+                    <div className="max-w-[82%] rounded-2xl border border-amber-100 bg-amber-50/95 px-3 py-2 text-xs text-amber-800 shadow-sm shadow-amber-900/5 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-200">
+                      <span className="mr-1 font-semibold">Echo Pet</span>
+                      <span>{msg.content}</span>
+                    </div>
+                  </div>
+                );
+              }
 
               return (
                 <div
@@ -1009,7 +1237,7 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
                   {msg.replyTo && !msg.isRecalled && (
                     <div className={`mb-1 max-w-[75%] rounded-lg bg-gray-200/60 px-3 py-1.5 text-xs text-gray-500 dark:bg-gray-800 ${isMine ? 'text-right' : ''}`}>
                       <span className="font-medium text-primary-500">{msg.replyTo.sender.nickname || msg.replyTo.sender.username}:</span>{' '}
-                      {msg.replyTo.type === 'image' ? '[图片]' : msg.replyTo.type === 'video' ? '[视频]' : msg.replyTo.content.slice(0, 30)}
+                      {msg.replyTo.type === 'image' ? '[图片]' : msg.replyTo.type === 'video' ? '[视频]' : msg.replyTo.type === 'voice' ? '[语音]' : msg.replyTo.type === 'call' ? (msg.replyTo.content || '[通话]') : msg.replyTo.content.slice(0, 30)}
                     </div>
                   )}
 
@@ -1023,13 +1251,17 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
                     )}
 
                     {!isMine && !msg.isRecalled && (
-                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary-100 text-xs font-bold text-primary-500 dark:bg-primary-900/30">
-                        {getSenderDisplayName(msg)[0]?.toUpperCase() || '?'}
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-primary-100 text-sm font-bold text-primary-500 dark:bg-primary-900/30">
+                        {getSenderAvatar(msg)
+                          ? <img src={assetUrl(getSenderAvatar(msg)!)} alt="" className="h-full w-full object-cover" />
+                          : getSenderDisplayName(msg)[0]?.toUpperCase() || '?'}
                       </div>
                     )}
                     {!isMine && msg.isRecalled && (
-                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gray-300 text-xs font-bold text-gray-500 dark:bg-gray-700 grayscale opacity-50">
-                        {getSenderDisplayName(msg)[0]?.toUpperCase() || '?'}
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-gray-300 text-sm font-bold text-gray-500 dark:bg-gray-700 grayscale opacity-50">
+                        {getSenderAvatar(msg)
+                          ? <img src={assetUrl(getSenderAvatar(msg)!)} alt="" className="h-full w-full object-cover" />
+                          : getSenderDisplayName(msg)[0]?.toUpperCase() || '?'}
                       </div>
                     )}
 
@@ -1041,12 +1273,12 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
                       )}
 
                       <div
-                        className={`message-media group relative rounded-2xl px-3.5 py-2 text-sm ${
+                        className={`message-media group relative text-sm shadow-sm ${
                           msg.isRecalled
-                            ? 'dm-collapse'
+                            ? 'dm-collapse rounded-2xl px-3.5 py-2'
                             : isMine
-                              ? 'bg-primary-500 text-white rounded-br-md'
-                              : 'bg-white text-gray-800 dark:bg-gray-800 dark:text-gray-200 rounded-bl-md shadow-sm'
+                              ? `${isMediaMessage ? 'rounded-[18px] p-1' : 'rounded-2xl rounded-br-md px-3.5 py-2'} bg-primary-500 text-white shadow-primary-500/10`
+                              : `${isMediaMessage ? 'rounded-[18px] p-1' : 'rounded-2xl rounded-bl-md px-3.5 py-2'} bg-white/95 text-gray-800 ring-1 ring-black/[0.03] dark:bg-gray-800/95 dark:text-gray-200 dark:ring-white/[0.04]`
                         }`}
                         onContextMenu={(e) => e.preventDefault()}
                         onTouchStart={(e) => {
@@ -1067,7 +1299,7 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
                           <>
                             {msg.type === 'image' ? (
                               <div className="relative">
-                                <img src={assetUrl(msg.content)} alt="" draggable={false} onContextMenu={(e) => e.preventDefault()} onDragStart={(e) => e.preventDefault()} onClick={() => setEmojiPreview(assetUrl(msg.content))} className="max-w-[160px] max-h-[160px] rounded-lg object-contain cursor-pointer" loading="lazy" onLoad={() => setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)} />
+                                <img src={assetUrl(msg.content)} alt="" draggable={false} onContextMenu={(e) => e.preventDefault()} onDragStart={(e) => e.preventDefault()} onClick={() => setEmojiPreview(assetUrl(msg.content))} className="max-h-[170px] max-w-[170px] cursor-pointer rounded-2xl object-contain" loading="lazy" onLoad={() => setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)} />
                                 <button
                                   onClick={() => collectAsEmoji(msg.content)}
                                   className="absolute -bottom-5 right-0 hidden rounded bg-gray-700 px-1.5 py-0.5 text-[10px] text-white group-hover:block hover:bg-gray-600"
@@ -1087,6 +1319,8 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
                               />
                             ) : msg.type === 'voice' ? (
                               <VoiceBubble src={assetUrl(msg.content)} />
+                            ) : msg.type === 'call' ? (
+                              <span className="text-xs text-gray-500 dark:text-gray-300">{msg.content || '[通话]'}</span>
                             ) : (
                               <span className="whitespace-pre-wrap break-words overflow-wrap-anywhere">{msg.content}</span>
                             )}
@@ -1102,14 +1336,10 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
                           </>
                         )}
 
-                        <div className={`flex items-center gap-1 mt-0.5 ${isMine ? 'justify-end' : ''}`}>
-                          <span className={`text-[10px] ${isMine ? (msg.isRecalled ? 'text-gray-400/50' : 'text-primary-200') : (msg.isRecalled ? 'text-gray-400/50' : 'text-gray-400')}`}>
-                            {formatMsgTime(msg.createdAt)}
-                          </span>
-                          {isMine && !msg.isRecalled && !isGroup && isRead(msg) && (
-                            <span className="text-[10px] text-primary-200">已读</span>
-                          )}
-                        </div>
+                      </div>
+                      <div className={`mt-1 flex items-center gap-1 px-1 text-[10px] leading-none text-gray-400 ${isMine ? 'justify-end' : 'justify-start'}`}>
+                        <span>{formatMsgTime(msg.createdAt)}</span>
+                        {isMine && !msg.isRecalled && !isGroup && isRead(msg) && <span>已读</span>}
                       </div>
                     </div>
 
@@ -1133,9 +1363,39 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
         <div className="flex items-center gap-2 border-t border-gray-100 bg-gray-50 px-4 py-2 dark:border-gray-800 dark:bg-gray-900">
           <div className="flex-1 border-l-2 border-primary-400 pl-2 text-xs text-gray-500 dark:text-gray-400">
             <span className="font-medium text-primary-500">{replyTo.sender.nickname || replyTo.sender.username}:</span>{' '}
-            {replyTo.type === 'image' ? '[图片]' : replyTo.type === 'video' ? '[视频]' : replyTo.content.slice(0, 40)}
+            {replyTo.type === 'image' ? '[图片]' : replyTo.type === 'video' ? '[视频]' : replyTo.type === 'voice' ? '[语音]' : replyTo.type === 'call' ? (replyTo.content || '[通话]') : replyTo.content.slice(0, 40)}
           </div>
           <button onClick={() => setReplyTo(null)} className="text-xs text-gray-400 hover:text-gray-600">✕</button>
+        </div>
+      )}
+
+      {recording && (
+        <div
+          className="relative z-20 mx-3 mb-2 flex items-center gap-2 rounded-2xl border border-primary-100 bg-white/95 px-3 py-2 shadow-lg shadow-primary-500/10 backdrop-blur dark:border-primary-900/40 dark:bg-gray-900/95"
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary-500 text-xs font-semibold text-white shadow-sm">
+            {recordingDuration}s
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{'\u6b63\u5728\u5f55\u97f3'}</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">{'\u70b9\u51fb\u53d1\u9001\u6216\u53d6\u6d88'}</p>
+          </div>
+          <button
+            type="button"
+            onClick={cancelRecording}
+            className="rounded-xl bg-gray-100 px-3 py-1.5 text-sm text-gray-600 dark:bg-gray-800 dark:text-gray-200"
+          >
+            {'\u53d6\u6d88'}
+          </button>
+          <button
+            type="button"
+            onClick={handleStopRecording}
+            className="rounded-xl bg-primary-500 px-3 py-1.5 text-sm font-medium text-white shadow-sm"
+          >
+            {'\u53d1\u9001'}
+          </button>
         </div>
       )}
 
@@ -1168,7 +1428,7 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
           className="border-t border-gray-100 bg-gray-50 px-4 py-3 dark:border-gray-800 dark:bg-gray-900"
           style={{ height: emojiExpanded ? '280px' : '128px', display: 'flex', flexDirection: 'column' }}
           onTouchStart={handleEmojiTouchStart}
-          onTouchMove={(e) => e.stopPropagation()}
+          onTouchMove={handleEmojiTouchMove}
           onTouchEnd={handleEmojiTouchEnd}
           onClick={(e) => e.stopPropagation()}
         >
@@ -1193,7 +1453,13 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
               )}
               <button
                 onClick={() => {
-                  setEmojiManageMode(!emojiManageMode);
+                  const next = !emojiManageMode;
+                  setEmojiManageMode(next);
+                  if (next) {
+                    setEmojiExpanded(true);
+                    setEmojiManageFlash(true);
+                    window.setTimeout(() => setEmojiManageFlash(false), 2000);
+                  }
                   setSelectedEmojis(new Set());
                 }}
                 className={`rounded-lg px-3 py-1 text-xs transition-colors ${emojiManageMode ? 'bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-300' : 'bg-gray-200 dark:bg-gray-700 text-gray-500 hover:text-primary-500'}`}
@@ -1239,91 +1505,55 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
           {emojis.length === 0 ? (
             <span className="text-xs text-gray-400">上传表情包图片...</span>
           ) : (
-            <div className="flex-1 overflow-hidden">
+            <div className={emojiManageMode && emojiExpanded ? 'flex-1 overflow-y-auto overflow-x-hidden' : 'flex-1 overflow-hidden'}>
               <div
-                className="grid h-full grid-cols-4 gap-2"
-                style={{ gridTemplateRows: emojiExpanded ? 'repeat(3, 1fr)' : '1fr' }}
+                className="grid h-full grid-cols-4 gap-2 overflow-y-auto px-0.5 pb-2"
+                style={{ gridTemplateRows: emojiExpanded ? 'repeat(auto-fill, minmax(64px, 1fr))' : '1fr' }}
               >
-              {visibleEmojis.map(emoji => (
-                <div key={emoji.id} className="relative flex items-center justify-center group">
-                  {/* 管理模式勾选圈 */}
-                  {emojiManageMode && (
-                    <button
-                      onClick={() => {
-                        setSelectedEmojis(prev => {
-                          const next = new Set(prev);
-                          if (next.has(emoji.id)) next.delete(emoji.id);
-                          else next.add(emoji.id);
-                          return next;
-                        });
-                      }}
-                      className={`absolute -top-1 -left-1 z-10 h-5 w-5 rounded-full border-2 flex items-center justify-center text-[10px] transition-colors ${
-                        selectedEmojis.has(emoji.id)
-                          ? 'bg-primary-500 border-primary-500 text-white'
-                          : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-500'
-                      }`}
-                    >
-                      {selectedEmojis.has(emoji.id) ? '✓' : ''}
-                    </button>
-                  )}
-                  <img
-                    src={assetUrl(emoji.imageUrl)}
-                    alt=""
-                    draggable={false}
-                    loading="lazy"
-                    onContextMenu={(e) => e.preventDefault()}
-                    onDragStart={(e) => e.preventDefault()}
-                    className="w-16 h-16 rounded-xl object-cover cursor-pointer hover:opacity-80 transition-opacity min-w-[64px] min-h-[64px]"
-                    onClick={() => {
-                      if (emojiManageMode) {
-                        setSelectedEmojis(prev => {
-                          const next = new Set(prev);
-                          if (next.has(emoji.id)) next.delete(emoji.id);
-                          else next.add(emoji.id);
-                          return next;
-                        });
-                        return;
-                      }
-                      if (!socket) return;
-                      const tempId = 'temp-' + Date.now();
-                      const optimisticMsg: Message = {
-                        id: tempId,
-                        senderId: user!.id,
-                        receiverId: isGroup ? null : peerId,
-                        groupId: isGroup ? peerId : null,
-                        content: emoji.imageUrl,
-                        type: 'image',
-                        isRecalled: false,
-                        replyToId: replyTo?.id || null,
-                        replyTo: replyTo ? { id: replyTo.id, content: replyTo.content, type: replyTo.type, sender: replyTo.sender } : null,
-                        createdAt: new Date().toISOString(),
-                        sender: { id: user!.id, username: user!.username, nickname: user!.nickname || user!.username, avatar: user!.avatar || '' },
-                      };
-                      setMessages(prev => [...prev, optimisticMsg]);
-                      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
-                      socket.emit('message:send', {
-                        ...(isGroup ? { groupId: peerId } : { receiverId: peerId }),
-                        content: emoji.imageUrl, type: 'image',
-                        replyToId: replyTo?.id || undefined,
-                      }, (res: any) => {
-                        if (res?.error) {
-                          toast(ERROR_MAP[res.error] || res.error, 'error');
-                          setMessages(prev => prev.filter(m => m.id !== tempId));
-                        } else if (res?.ok && res.message) {
-                          setMessages(prev => prev.map(m => m.id === tempId ? { ...res.message, sender: optimisticMsg.sender } : m));
-                        }
-                      });
-                      setReplyTo(null);
-                    }}
-                  />
-                  {!emojiManageMode && (
-                    <button
-                      onClick={async () => { await api('DELETE', `/api/emojis/${emoji.id}`); fetchEmojis(true); }}
-                      className="absolute -top-1 -right-1 hidden group-hover:flex h-5 w-5 rounded-full bg-red-500 text-white text-[10px] items-center justify-center"
-                    >✕</button>
-                  )}
-                </div>
-              ))}
+                {(emojiManageMode && emojiExpanded ? emojis : (emojiPages[emojiPage] || [])).map(emoji => {
+                  const selected = selectedEmojis.has(emoji.id);
+                  return (
+                    <div key={emoji.id} className="relative flex items-center justify-center" data-emoji-id={emoji.id}>
+                      <img
+                        src={assetUrl(emoji.imageUrl)}
+                        alt=""
+                        draggable={false}
+                        loading="lazy"
+                        onContextMenu={(e) => e.preventDefault()}
+                        onDragStart={(e) => e.preventDefault()}
+                        onPointerDown={(e) => {
+                          if (!emojiManageMode || !emojiExpanded) return;
+                          emojiDragIdRef.current = emoji.id;
+                          emojiMovedRef.current = false;
+                          (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+                        }}
+                        onPointerMove={(e) => {
+                          if (!emojiManageMode || !emojiExpanded || !emojiDragIdRef.current) return;
+                          e.preventDefault();
+                          const target = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-emoji-id]') as HTMLElement | null;
+                          const toId = target?.dataset.emojiId;
+                          if (toId && toId !== emojiDragIdRef.current) {
+                            moveEmojiById(emojiDragIdRef.current, toId);
+                            emojiMovedRef.current = true;
+                          }
+                        }}
+                        onPointerUp={(e) => {
+                          if (emojiManageMode && emojiExpanded) {
+                            try { (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId); } catch {}
+                            if (!emojiMovedRef.current && emojiDragIdRef.current === emoji.id) toggleEmojiSelected(emoji.id);
+                            emojiDragIdRef.current = null;
+                            emojiMovedRef.current = false;
+                          }
+                        }}
+                        className={(emojiManageMode && selected ? `ring-1 ${selectedRing} ` : emojiManageMode && emojiManageFlash ? `ring-1 ${selectedRing} animate-pulse ` : 'ring-1 ring-transparent ') + 'h-16 w-16 min-w-[64px] min-h-[64px] cursor-pointer rounded-xl object-cover transition-all hover:opacity-80'}
+                        onClick={() => {
+                          if (emojiManageMode && emojiExpanded) return;
+                          sendEmojiImage(emoji);
+                        }}
+                      />
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -1331,13 +1561,15 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
       )}
 
       <motion.form layout onSubmit={sendMessage} transition={{ type: 'spring', stiffness: 200, damping: 25 }}
-        className="flex items-end gap-2 px-3 py-2.5 relative bg-white/70 dark:bg-zinc-900/70 backdrop-blur-xl border-t border-white/20 dark:border-zinc-800/50 group/input"
-        style={{ minHeight: '64px', paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}>
+        onClick={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
+        className="relative flex items-end gap-2 border-t border-gray-100 bg-white/95 px-3 py-2.5 shadow-[0_-8px_24px_rgba(15,23,42,0.04)] backdrop-blur-xl dark:border-zinc-800/70 dark:bg-zinc-900/90 group/input"
+        style={{ minHeight: '62px', paddingBottom: 'calc(0.65rem + env(safe-area-inset-bottom, 0px))' }}>
         {/* Toggle button */}
         <button
           type="button"
           onClick={() => { setActivePanel(activePanel === 'more' ? null : 'more'); setShowShootMenu(false); }}
-          className={`rounded-lg p-2 shrink-0 transition-all duration-300 ${activePanel === 'more' ? 'text-primary-500' : 'text-gray-400'}`}
+          className={`h-10 w-10 rounded-xl p-2 shrink-0 transition-all duration-300 ${activePanel === 'more' ? 'bg-primary-50 text-primary-500 dark:bg-primary-900/20' : 'text-gray-400 hover:bg-gray-100 dark:hover:bg-zinc-800'}`}
           title={activePanel === 'more' ? '收起' : '展开'}
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
@@ -1378,62 +1610,6 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
                 }}
               />
               {/* 拍摄：弹子菜单 */}
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setShowShootMenu(!showShootMenu)}
-                  className="flex items-center justify-center w-9 h-9 rounded-lg text-gray-400 hover:text-primary-500 transition-colors"
-                  title="拍摄"
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" />
-                  </svg>
-                </button>
-                {/* 拍摄 ActionSheet */}
-                {false && showShootMenu && (
-                  <div className="fixed inset-0 z-[60]" onClick={() => setShowShootMenu(false)}>
-                    <div className="absolute bottom-0 left-0 right-0 bg-white dark:bg-gray-800 rounded-t-2xl shadow-2xl border-t border-gray-200 dark:border-gray-700"
-                      style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
-                      onClick={(e) => e.stopPropagation()}>
-                      <div className="py-1">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowShootMenu(false);
-                            if (is5Plus()) { capturePhoto5Plus(); }
-                            else { shootPhotoRef.current?.click(); }
-                          }}
-                          className="flex w-full items-center justify-center px-4 py-3.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 border-b border-gray-100 dark:border-gray-700"
-                        >
-                          拍照
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowShootMenu(false);
-                            if (is5Plus()) { captureVideo5Plus(); }
-                            else { shootVideoRef.current?.click(); }
-                          }}
-                          className="flex w-full items-center justify-center px-4 py-3.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 border-b border-gray-100 dark:border-gray-700"
-                        >
-                          拍视频
-                        </button>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setShowShootMenu(false)}
-                        className="flex w-full items-center justify-center px-4 py-3.5 text-sm text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700"
-                      >
-                        取消
-                      </button>
-                    </div>
-                  </div>
-                )}
-                <input ref={shootPhotoRef} type="file" accept="image/*" capture="environment" className="absolute h-px w-px opacity-0 pointer-events-none"
-                  onChange={(e) => { const f = e.target.files?.[0]; if (f) sendImage(f); e.target.value = ''; }} />
-                <input ref={shootVideoRef} type="file" accept="video/*" capture="environment" className="absolute h-px w-px opacity-0 pointer-events-none"
-                  onChange={(e) => { const f = e.target.files?.[0]; if (f) sendVideo(f); e.target.value = ''; }} />
-              </div>
               {/* 定时 */}
               <button
                 type="button"
@@ -1462,12 +1638,10 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
             ref={inputRef as any}
             value={input}
             isRecording={recording}
+            micHint={recording ? '录音中' : '录音'}
             onMicClick={() => {
-              if (recording) {
-                handleStopRecording();
-              } else {
-                startRecording();
-              }
+              if (recording) return;
+              startRecording();
             }}
             onChange={(e) => {
               setInput(e.target.value);
@@ -1504,7 +1678,7 @@ export default function ChatWindow({ peerId, peer, chatType, groupName, groupAva
         <button
           type="submit"
           disabled={!input.trim()}
-          className="shrink-0 flex items-center gap-1.5 rounded-2xl bg-primary-500 px-5 py-2.5 text-sm font-bold text-white hover:bg-primary-600 active:scale-95 disabled:opacity-30 disabled:active:scale-100 transition-all shadow-sm shadow-primary-500/25"
+          className="shrink-0 flex h-11 items-center gap-1.5 rounded-2xl bg-primary-500 px-4 text-sm font-bold text-white shadow-sm shadow-primary-500/25 transition-all hover:bg-primary-600 active:scale-95 disabled:opacity-30 disabled:active:scale-100"
         >
           <Send size={16} strokeWidth={2.5} />
           <span className="text-xs">发送</span>

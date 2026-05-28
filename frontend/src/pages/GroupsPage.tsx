@@ -44,8 +44,8 @@ interface Group {
 }
 
 const roleLabel = (role: string) => role === 'owner' ? '群主' : role === 'admin' ? '管理员' : '成员';
-const displayName = (m: Member) => m.alias || m.user.nickname || m.user.username;
-const friendName = (f: Friend) => f.alias || f.peer.nickname || f.peer.username;
+const displayName = (member: Member) => member.alias || member.user.nickname || member.user.username;
+const friendName = (friend: Friend) => friend.alias || friend.peer.nickname || friend.peer.username;
 
 export default function GroupsPage() {
   const nav = useNavigate();
@@ -89,8 +89,8 @@ export default function GroupsPage() {
   }, []);
 
   const availableFriends = useMemo(() => {
-    const existing = new Set(activeGroup?.members.map(m => m.userId) || []);
-    return friends.filter(f => !existing.has(f.peer.id));
+    const existing = new Set(activeGroup?.members.map(member => member.userId) || []);
+    return friends.filter(friend => !existing.has(friend.peer.id));
   }, [friends, activeGroup]);
 
   const resetCreate = () => {
@@ -127,6 +127,7 @@ export default function GroupsPage() {
       resetCreate();
       await fetchGroups();
       toast('群聊已创建', 'success');
+      nav(`/chat/${group.id}`);
     } catch (e: any) {
       toast(e.message || '创建失败', 'error');
     }
@@ -269,7 +270,7 @@ export default function GroupsPage() {
                 </button>
                 <div className="flex items-center justify-between border-t border-gray-50 px-4 py-2 dark:border-gray-800">
                   <div className="flex -space-x-2">
-                    {group.members.slice(0, 6).map(m => <SmallAvatar key={m.userId} name={displayName(m)} url={m.user.avatar} />)}
+                    {group.members.slice(0, 6).map(member => <SmallAvatar key={member.userId} name={displayName(member)} url={member.user.avatar} />)}
                   </div>
                   <button onClick={() => openDetail(group)} className="rounded-lg px-2 py-1 text-xs text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/20">管理</button>
                 </div>
@@ -384,18 +385,48 @@ function GroupForm({ name, notice, avatarUrl, onName, onNotice, onPickAvatar }: 
 }
 
 function FriendPicker({ friends, selectedIds, onToggle, compact = false }: { friends: Friend[]; selectedIds: Set<string>; onToggle: (id: string) => void; compact?: boolean }) {
+  const [query, setQuery] = useState('');
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? friends.filter(friend => {
+      const fields = [
+        friend.alias,
+        friend.peer.nickname,
+        friend.peer.username,
+        String(friend.peer.digitalId || ''),
+      ];
+      return fields.some(value => value?.toLowerCase().includes(q));
+    })
+    : friends;
+
   if (!friends.length) return <p className="rounded-xl bg-gray-50 py-4 text-center text-sm text-gray-400 dark:bg-gray-900">暂无可选择好友</p>;
   return (
-    <div className={`grid ${compact ? 'grid-cols-2' : 'grid-cols-3'} gap-2`}>
-      {friends.map(friend => {
-        const checked = selectedIds.has(friend.peer.id);
-        return (
-          <button key={friend.peer.id} onClick={() => onToggle(friend.peer.id)} className={`flex items-center gap-2 rounded-xl border p-2 text-left ${checked ? 'border-primary-400 bg-primary-50 dark:bg-primary-900/20' : 'border-gray-100 bg-gray-50 dark:border-gray-800 dark:bg-gray-900'}`}>
-            <SmallAvatar name={friendName(friend)} url={friend.peer.avatar} />
-            <span className="min-w-0 flex-1 truncate text-xs text-gray-700 dark:text-gray-300">{friendName(friend)}</span>
-          </button>
-        );
-      })}
+    <div className="space-y-2">
+      <input
+        value={query}
+        onChange={e => setQuery(e.target.value)}
+        placeholder="搜索备注、昵称、用户名或 Echo ID"
+        className="w-full rounded-xl border border-gray-200 px-3 py-2 text-xs dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+      />
+      <div className="flex items-center justify-between text-[11px] text-gray-400">
+        <span>已选 {selectedIds.size} 人</span>
+        {query && <span>{filtered.length} 个匹配</span>}
+      </div>
+      {filtered.length === 0 ? (
+        <p className="rounded-xl bg-gray-50 py-4 text-center text-sm text-gray-400 dark:bg-gray-900">没有匹配的好友</p>
+      ) : (
+        <div className={`grid ${compact ? 'grid-cols-2' : 'grid-cols-3'} gap-2`}>
+          {filtered.map(friend => {
+            const checked = selectedIds.has(friend.peer.id);
+            return (
+              <button key={friend.peer.id} onClick={() => onToggle(friend.peer.id)} className={`flex items-center gap-2 rounded-xl border p-2 text-left ${checked ? 'border-primary-400 bg-primary-50 dark:bg-primary-900/20' : 'border-gray-100 bg-gray-50 dark:border-gray-800 dark:bg-gray-900'}`}>
+                <SmallAvatar name={friendName(friend)} url={friend.peer.avatar} />
+                <span className="min-w-0 flex-1 truncate text-xs text-gray-700 dark:text-gray-300">{friendName(friend)}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

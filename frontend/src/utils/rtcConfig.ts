@@ -48,12 +48,12 @@ export function getCallReadinessError(): string | null {
     return '当前环境不支持实时通话';
   }
 
-  if (!navigator.mediaDevices?.getUserMedia) {
-    return '当前环境不支持麦克风通话';
-  }
-
   if (!is5Plus() && !window.isSecureContext && location.hostname !== 'localhost') {
     return '网页通话需要 HTTPS 域名';
+  }
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return '当前环境不支持麦克风通话';
   }
 
   return null;

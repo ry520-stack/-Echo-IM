@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import * as momentService from '../services/moment.service';
+import { getIO } from '../services/socket.service';
 
 export async function getMoments(req: Request, res: Response) {
   const page = parseInt(req.query.page as string) || 1;
@@ -34,6 +35,7 @@ export async function createMoment(req: Request, res: Response) {
       galleryMode,
       Number.isInteger(coverIndex) ? coverIndex : parseInt(coverIndex, 10) || 0,
     );
+    getIO()?.emit('moment:new', { momentId: moment.id, userId: req.userId });
     res.status(201).json(moment);
   } catch (e: any) {
     res.status(400).json({ error: e.message });
@@ -62,7 +64,7 @@ export async function addComment(req: Request, res: Response) {
 
 export async function getComments(req: Request, res: Response) {
   try {
-    const comments = await momentService.getComments(req.params.id);
+    const comments = await momentService.getComments(req.params.id, req.userId);
     res.json(comments);
   } catch (e: any) {
     res.status(500).json({ error: e.message });

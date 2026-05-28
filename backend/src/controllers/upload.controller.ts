@@ -47,6 +47,15 @@ export async function uploadVoice(req: Request, res: Response) {
   res.json({ url });
 }
 
+// POST /api/upload/ringtone
+export async function uploadRingtone(req: Request, res: Response) {
+  if (!req.file) {
+    return res.status(400).json({ error: '请选择音频文件' });
+  }
+  const url = getUploadUrl(req.file.filename);
+  res.json({ url });
+}
+
 // POST /api/upload/video
 export async function uploadVideo(req: Request, res: Response) {
   if (!req.file) {

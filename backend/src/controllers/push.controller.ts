@@ -4,7 +4,13 @@ import * as pushService from '../services/push.service';
 export async function registerDevice(req: Request, res: Response) {
   try {
     const { clientId, platform, appId } = req.body || {};
-    if (!clientId || typeof clientId !== 'string') {
+    if (
+      !clientId ||
+      typeof clientId !== 'string' ||
+      !clientId.trim() ||
+      clientId.trim() === 'null' ||
+      clientId.trim() === 'undefined'
+    ) {
       return res.status(400).json({ error: 'clientId 不能为空' });
     }
     await pushService.registerDevice({

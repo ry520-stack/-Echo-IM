@@ -14,12 +14,21 @@ import { is5Plus } from '../utils/env';
 
 const TOKEN_KEY = 'echo-token';
 const SERVER_URL_KEY = 'echo-server-url';
-const DEFAULT_APP_SERVER_URL = 'http://8.140.194.214:8080';
+const DEFAULT_APP_SERVER_URL = 'https://echo-im.cloud';
+
+function normalizeBaseUrl(url: string): string {
+  const base = url.trim().replace(/\/$/, '');
+  if (!base) return '';
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:' && base.startsWith('http:')) {
+    return '';
+  }
+  return base;
+}
 
 function getBaseUrl(): string {
-  const manual = localStorage.getItem(SERVER_URL_KEY);
+  const manual = normalizeBaseUrl(localStorage.getItem(SERVER_URL_KEY) || '');
   if (manual) return manual;
-  const envBase = (import.meta as any).env?.VITE_API_BASE || '';
+  const envBase = normalizeBaseUrl((import.meta as any).env?.VITE_API_BASE || '');
   if (envBase) return envBase;
   if (is5Plus() || window.location.protocol === 'file:') return DEFAULT_APP_SERVER_URL;
   return '';

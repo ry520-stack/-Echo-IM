@@ -59,6 +59,35 @@ export function useAudioRecorder() {
     setIsRecording(true);
   }, [isRecording]);
 
+  const waitPlusRecordPath = useCallback((): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const startTime = Date.now();
+      const waitPath = () => {
+        if (Date.now() - startTime > 5000) {
+          reject(new Error('录音文件生成失败'));
+          return;
+        }
+        if (plusRecordPathRef.current) {
+          resolve(plusRecordPathRef.current);
+        } else {
+          setTimeout(waitPath, 100);
+        }
+      };
+      waitPath();
+    });
+  }, []);
+
+  const stopRecordPath = useCallback((): Promise<string> => {
+    if (!is5Plus()) return Promise.reject(new Error('当前环境不是 App'));
+    return new Promise((resolve, reject) => {
+      const recorder = plusRecorderRef.current;
+      if (!recorder) return reject(new Error('未开始录音'));
+      recorder.stop();
+      setIsRecording(false);
+      waitPlusRecordPath().then(resolve).catch(reject);
+    });
+  }, [waitPlusRecordPath]);
+
   const stopRecord = useCallback((): Promise<File> => {
     if (is5Plus()) {
       return new Promise((resolve, reject) => {
@@ -67,16 +96,10 @@ export function useAudioRecorder() {
         recorder.stop();
         setIsRecording(false);
 
-        // 等待 record 成功回调写入 path（5 秒超时）
-        const startTime = Date.now();
-        const waitPath = () => {
-          if (Date.now() - startTime > 5000) {
-            return reject(new Error('录音文件生成失败'));
-          }
-          if (plusRecordPathRef.current) {
+        waitPlusRecordPath().then((recordPath) => {
             // 读取真实文件
             const plus = (window as any).plus;
-            plus.io.resolveLocalFileSystemURL(plusRecordPathRef.current, (entry: any) => {
+            plus.io.resolveLocalFileSystemURL(recordPath, (entry: any) => {
               entry.file((file: any) => {
                 const reader = new FileReader();
                 reader.onload = () => {
@@ -88,12 +111,7 @@ export function useAudioRecorder() {
                 reader.readAsArrayBuffer(file);
               });
             }, () => reject(new Error('录音文件不存在')));
-          } else {
-            // path 还没写入，等一下再试
-            setTimeout(waitPath, 100);
-          }
-        };
-        waitPath();
+        }).catch(reject);
       });
     }
 
@@ -116,7 +134,7 @@ export function useAudioRecorder() {
 
       mediaRecorderRef.current.stop();
     });
-  }, []);
+  }, [waitPlusRecordPath]);
 
-  return { startRecord, stopRecord, isRecording };
+  return { startRecord, stopRecord, stopRecordPath, isRecording };
 }

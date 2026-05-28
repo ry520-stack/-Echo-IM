@@ -56,14 +56,38 @@ function waitForPlusReady(): Promise<any> {
   });
 }
 
+function isValidClientId(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const clientId = value.trim();
+  return clientId !== '' && clientId !== 'null' && clientId !== 'undefined';
+}
+
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function readPushClientId(plus: any) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const info = plus.push.getClientInfo();
+    const clientId = info?.clientid || info?.clientId;
+    if (isValidClientId(clientId)) {
+      return {
+        clientId: clientId.trim(),
+        appId: info?.appid || info?.appId || '',
+      };
+    }
+    await sleep(800);
+  }
+  return null;
+}
+
 export async function registerNativePushDevice(token: string | null) {
   if (!token) return false;
   const plus = await waitForPlusReady();
   if (!plus?.push?.getClientInfo) return false;
 
-  const info = plus.push.getClientInfo();
-  const clientId = info?.clientid || info?.clientId;
-  if (!clientId) return false;
+  const info = await readPushClientId(plus);
+  if (!info) return false;
 
   const res = await fetch(`${getServerUrl()}/api/push/devices`, {
     method: 'POST',
@@ -72,9 +96,9 @@ export async function registerNativePushDevice(token: string | null) {
       'Authorization': `Bearer ${token}`,
     },
     body: JSON.stringify({
-      clientId,
+      clientId: info.clientId,
       platform: plus.os?.name || 'android',
-      appId: info?.appid || info?.appId || '',
+      appId: info.appId,
     }),
   });
   return res.ok;

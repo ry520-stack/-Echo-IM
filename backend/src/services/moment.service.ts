@@ -156,9 +156,34 @@ export async function addComment(momentId: string, userId: string, content: stri
   });
 }
 
-export async function getComments(momentId: string) {
+export async function getComments(momentId: string, viewerId: string) {
+  const moment = await prisma.moment.findUnique({
+    where: { id: momentId },
+    select: { userId: true },
+  });
+  if (!moment) throw new Error('动态不存在');
+
+  const friendships = await prisma.friend.findMany({
+    where: {
+      status: 'accepted',
+      OR: [
+        { userId: viewerId },
+        { friendId: viewerId },
+      ],
+    },
+    select: { userId: true, friendId: true },
+  });
+  const friendIds = new Set(friendships.map(f => f.userId === viewerId ? f.friendId : f.userId));
+
   return prisma.momentComment.findMany({
-    where: { momentId },
+    where: {
+      momentId,
+      OR: [
+        { userId: viewerId },
+        { userId: moment.userId },
+        { userId: { in: [...friendIds] } },
+      ],
+    },
     orderBy: { createdAt: 'asc' },
     include: { user: { select: { id: true, username: true, nickname: true, avatar: true } } },
   });

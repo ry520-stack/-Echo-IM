@@ -1,17 +1,22 @@
 import { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence, Reorder } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { assetUrl } from '../utils/assetUrl';
 import { api, getServerUrl } from '../api/client';
-import { compressImage } from '../utils/compressImage';
+import { prepareMomentImage } from '../utils/compressImage';
 import FloatingStackGallery from '../components/FloatingStackGallery';
 import PaginatedGridGallery from '../components/PaginatedGridGallery';
 import StarZoneSelector, { type PrivacyType } from '../components/StarZoneSelector';
 import Modal from '../components/Modal';
 
 const MAX_MOMENT_IMAGES = 18;
+const accentRingClass: Record<string, string> = {
+  purple: 'ring-primary-500',
+  blue: 'ring-blue-600',
+  black: 'ring-gray-900 dark:ring-gray-100',
+};
 
 interface MomentUser {
   id: string;
@@ -45,6 +50,8 @@ export default function MomentsPage() {
   const { user } = useAuth();
   const toast = useToast();
   const nav = useNavigate();
+  const [accentColor, setAccentColor] = useState(() => localStorage.getItem('echo-accent-color') || 'purple');
+  const selectedRing = accentRingClass[accentColor] || accentRingClass.purple;
   const [moments, setMoments] = useState<MomentData[]>([]);
   const [loading, setLoading] = useState(true);
   const [commentsFor, setCommentsFor] = useState<string | null>(null);
@@ -76,6 +83,10 @@ export default function MomentsPage() {
   });
   const [composerMode, setComposerMode] = useState<'stack' | 'grid'>('stack');
   const [coverIndex, setCoverIndex] = useState(0);
+  const [coverPickMode, setCoverPickMode] = useState(false);
+  const [draggingImageUrl, setDraggingImageUrl] = useState<string | null>(null);
+  const deleteZoneRef = useRef<HTMLDivElement>(null);
+  const momentDragUrlRef = useRef<string | null>(null);
   // Grid expand state per moment
   const [expandedGrids, setExpandedGrids] = useState<Set<string>>(new Set());
   const gridTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -88,6 +99,16 @@ export default function MomentsPage() {
     }
     return () => { if (gridTimerRef.current) clearTimeout(gridTimerRef.current); };
   }, [expandedGrids]);
+
+  useEffect(() => {
+    const syncAccent = () => setAccentColor(localStorage.getItem('echo-accent-color') || 'purple');
+    window.addEventListener('storage', syncAccent);
+    window.addEventListener('echo-accent-color-change', syncAccent);
+    return () => {
+      window.removeEventListener('storage', syncAccent);
+      window.removeEventListener('echo-accent-color-change', syncAccent);
+    };
+  }, []);
 
   const fetchMoments = async (pageNum = 1) => {
     try {
@@ -109,7 +130,10 @@ export default function MomentsPage() {
     uploadingCount.current += 1;
     setUploading(true);
     try {
-      const compressed = await compressImage(file);
+      if (file.size > 30 * 1024 * 1024) {
+        throw new Error('图片/GIF 不能超过 30MB');
+      }
+      const compressed = await prepareMomentImage(file);
       const base = getServerUrl();
       const token = localStorage.getItem('echo-token');
       const formData = new FormData();
@@ -119,8 +143,11 @@ export default function MomentsPage() {
         headers: { 'Authorization': `Bearer ${token}` },
         body: formData,
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      const contentType = res.headers.get('content-type') || '';
+      const data = contentType.includes('application/json')
+        ? await res.json()
+        : { error: (await res.text()).slice(0, 100) };
+      if (!res.ok) throw new Error(data.error || '上传失败');
       setUploadedImages(prev => [...prev, data.url]);
     } catch (e: any) {
       toast(e.message || '上传失败', 'error');
@@ -132,6 +159,45 @@ export default function MomentsPage() {
 
   const removeImage = (i: number) => {
     setUploadedImages(prev => prev.filter((_, j) => j !== i));
+    setCoverIndex(prev => {
+      if (i === prev) return 0;
+      if (i < prev) return Math.max(0, prev - 1);
+      return prev;
+    });
+  };
+
+  const reorderUploadedImages = (next: string[]) => {
+    const coverUrl = uploadedImages[coverIndex] || next[0];
+    setUploadedImages(next);
+    setCoverIndex(Math.max(0, next.indexOf(coverUrl)));
+  };
+
+  const moveUploadedImage = (fromUrl: string, toUrl: string) => {
+    if (fromUrl === toUrl) return;
+    setUploadedImages(prev => {
+      const from = prev.indexOf(fromUrl);
+      const to = prev.indexOf(toUrl);
+      if (from < 0 || to < 0 || from === to) return prev;
+      const coverUrl = prev[coverIndex] || prev[0];
+      const next = [...prev];
+      const [item] = next.splice(from, 1);
+      next.splice(to, 0, item);
+      setCoverIndex(Math.max(0, next.indexOf(coverUrl)));
+      return next;
+    });
+  };
+
+  const handleImageDragEnd = (url: string, info: any) => {
+    setDraggingImageUrl(null);
+    const rect = deleteZoneRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const point = info?.point || {};
+    const x = point.x ?? 0;
+    const y = point.y ?? 0;
+    if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+      const index = uploadedImages.indexOf(url);
+      if (index >= 0) removeImage(index);
+    }
   };
 
   const resetComposer = () => {
@@ -140,6 +206,7 @@ export default function MomentsPage() {
     setNewContent('');
     setUploadedImages([]);
     setCoverIndex(0);
+    setCoverPickMode(false);
     setPrivacy('PUBLIC');
     setPrivacyGroups([]);
     setHiddenUserIds([]);
@@ -391,26 +458,72 @@ export default function MomentsPage() {
               autoFocus
             />
 
-            {/* Images — Framer Motion Reorder */}
+            {/* Images */}
             {uploadedImages.length > 0 && (
-              <Reorder.Group axis="y" values={uploadedImages} onReorder={setUploadedImages} className="mt-3 grid grid-cols-3 gap-2">
-                {uploadedImages.map((url, i) => (
-                  <Reorder.Item key={url} value={url} className="relative aspect-square w-full cursor-grab active:cursor-grabbing" whileDrag={{ scale: 1.05, boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}>
-                    <img src={assetUrl(url)} alt="" className="w-full h-full rounded-xl object-cover" onError={(e) => { (e.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="%23f0f0f0" width="100" height="100"/><text x="50" y="55" text-anchor="middle" fill="%23999" font-size="12">🌌</text></svg>'; }} />
-                    <button onClick={() => { removeImage(i); if (coverIndex >= uploadedImages.length - 1) setCoverIndex(0); }} className="absolute bottom-1 left-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/30 text-white/70 text-[10px] z-10 hover:bg-red-500/80 hover:text-white transition-colors">✕</button>
-                    {i === coverIndex && <span className="absolute top-1 left-1 bg-primary-500 text-white text-[10px] px-1.5 py-0.5 rounded-full z-10">封面</span>}
-                    {i !== coverIndex && (
-                      <button onClick={() => setCoverIndex(i)} className="absolute top-1 left-1 bg-black/40 text-white/60 text-[9px] px-1 py-0.5 rounded-full z-10 hover:bg-primary-500/80 hover:text-white transition-colors">设封面</button>
-                    )}
-                  </Reorder.Item>
-                ))}
-              </Reorder.Group>
+              <div className="mt-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setCoverPickMode(v => !v)}
+                    className={`rounded-xl px-3 py-1.5 text-xs font-medium transition-colors ${coverPickMode ? 'bg-primary-500 text-white' : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-300'}`}
+                  >
+                    {'\u9009\u62e9\u5c01\u9762'}
+                  </button>
+                  <span className="text-[11px] text-gray-400">{coverPickMode ? '\u70b9\u51fb\u4e00\u5f20\u8bbe\u4e3a\u5c01\u9762' : '\u957f\u6309\u62d6\u52a8\u8c03\u6574\u987a\u5e8f'}</span>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {uploadedImages.map((url, i) => (
+                    <div
+                      key={url}
+                      data-moment-img={url}
+                      className="relative aspect-square touch-none"
+                      onPointerDown={(e) => {
+                        if (coverPickMode) return;
+                        momentDragUrlRef.current = url;
+                        setDraggingImageUrl(url);
+                        (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+                      }}
+                      onPointerMove={(e) => {
+                        if (!momentDragUrlRef.current) return;
+                        e.preventDefault();
+                        const target = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-moment-img]') as HTMLElement | null;
+                        const toUrl = target?.dataset.momentImg;
+                        if (toUrl && toUrl !== momentDragUrlRef.current) moveUploadedImage(momentDragUrlRef.current, toUrl);
+                      }}
+                      onPointerUp={(e) => {
+                        try { (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId); } catch {}
+                        if (momentDragUrlRef.current) handleImageDragEnd(momentDragUrlRef.current, { point: { x: e.clientX, y: e.clientY } });
+                        momentDragUrlRef.current = null;
+                        setDraggingImageUrl(null);
+                      }}
+                      onClick={() => {
+                        if (!coverPickMode) return;
+                        setCoverIndex(i);
+                        setCoverPickMode(false);
+                      }}
+                    >
+                      <img
+                        src={assetUrl(url)}
+                        alt=""
+                        className={(i === coverIndex ? 'ring-1 ' + selectedRing + ' ' : coverPickMode ? 'ring-1 ring-primary-200 ' : 'ring-1 ring-gray-100 dark:ring-gray-800 ') + 'h-full w-full rounded-xl object-cover transition-all'}
+                        onError={(e) => { (e.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="%23f0f0f0" width="100" height="100"/></svg>'; }}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <div
+                  ref={deleteZoneRef}
+                  className={`flex h-12 items-center justify-center rounded-2xl border border-dashed text-xs transition-colors ${draggingImageUrl ? 'border-red-300 bg-red-50 text-red-500 dark:border-red-800 dark:bg-red-950/30' : 'border-gray-200 bg-gray-50 text-gray-400 dark:border-gray-800 dark:bg-gray-900'}`}
+                >
+                  {'\u62d6\u5230\u8fd9\u91cc\u5220\u9664'}
+                </div>
+              </div>
             )}
 
             {uploadedImages.length < MAX_MOMENT_IMAGES && (
               <label className={`mt-3 flex items-center justify-center rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600 h-24 cursor-pointer hover:border-primary-400 transition-colors ${uploading ? 'opacity-50' : ''}`}>
                 <span className="text-sm text-gray-400">{uploading ? '上传中...' : '+ 添加图片'}</span>
-                <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => { const files = e.target.files; if (files) { for (let i = 0; i < Math.min(files.length, MAX_MOMENT_IMAGES - uploadedImages.length); i++) uploadImage(files[i]); } }} />
+                <input type="file" accept="image/*,image/gif" multiple className="hidden" onChange={(e) => { const files = e.target.files; if (files) { for (let i = 0; i < Math.min(files.length, MAX_MOMENT_IMAGES - uploadedImages.length); i++) uploadImage(files[i]); } }} />
               </label>
             )}
 

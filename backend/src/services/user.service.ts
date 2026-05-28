@@ -9,8 +9,11 @@ export async function getUser(userId: string) {
 
 export async function updateUser(
   userId: string,
-  data: { nickname?: string; avatar?: string; status?: string; autoReply?: string; allowStrangerMessage?: boolean; readReceiptsEnabled?: boolean }
+  data: { nickname?: string; avatar?: string; status?: string; autoReply?: string; allowStrangerMessage?: boolean; readReceiptsEnabled?: boolean; callRingtoneUrl?: string; callRingtoneMode?: string }
 ) {
+  if (data.callRingtoneMode && !['peer', 'mine'].includes(data.callRingtoneMode)) {
+    throw new Error('Invalid ringtone mode');
+  }
   const user = await prisma.user.update({
     where: { id: userId },
     data,
@@ -38,6 +41,7 @@ export async function searchUsers(query: string) {
       id: true, username: true, digitalId: true,
       nickname: true, avatar: true, status: true, lastSeenAt: true,
       autoReply: true, allowStrangerMessage: true, readReceiptsEnabled: true,
+      callRingtoneUrl: true, callRingtoneMode: true,
       bgConversation: true, bgGravity: true, bgChat: true,
     },
   });

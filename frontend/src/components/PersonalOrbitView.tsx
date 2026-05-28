@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Settings, MessageCircle, Trophy } from 'lucide-react';
+import { CalendarDays, Search, Settings, MessageCircle, Trophy } from 'lucide-react';
 import { api } from '../api/client';
 import { useSocket } from '../contexts/SocketContext';
 import { assetUrl } from '../utils/assetUrl';
@@ -109,6 +109,10 @@ export default function PersonalOrbitView({
     if (peer?.digitalId) navigate(`/chat/${peer.digitalId}/settings?from=orbit`);
   };
 
+  const openMessageSearch = () => {
+    navigate(`/search?peerId=${peerId}&title=${encodeURIComponent(peerName)}`);
+  };
+
   const selectDisplayGroup = async (displayGroupId: string | null) => {
     const next = await api<RelationshipSummary>('PATCH', `/api/friends/relationship/${peerId}`, { displayGroupId });
     setSummary(next);
@@ -169,6 +173,12 @@ export default function PersonalOrbitView({
               </button>
               <button onClick={openSettings} className="flex items-center justify-center gap-2 rounded-2xl bg-gray-100 py-3 text-sm font-medium text-gray-700 dark:bg-gray-800 dark:text-gray-200">
                 <Settings size={16} /> 资料设置
+              </button>
+              <button onClick={openMessageSearch} className="flex items-center justify-center gap-2 rounded-2xl bg-gray-100 py-3 text-sm font-medium text-gray-700 dark:bg-gray-800 dark:text-gray-200">
+                <Search size={16} /> {'\u641c\u7d22\u804a\u5929\u8bb0\u5f55'}
+              </button>
+              <button onClick={openMessageSearch} className="flex items-center justify-center gap-2 rounded-2xl bg-gray-100 py-3 text-sm font-medium text-gray-700 dark:bg-gray-800 dark:text-gray-200">
+                <CalendarDays size={16} /> {'\u6309\u65e5\u671f\u67e5\u770b'}
               </button>
             </div>
           </section>

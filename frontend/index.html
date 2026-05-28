@@ -10,6 +10,16 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="manifest" href="./manifest.json" />
     <title>Echo</title>
+    <script>
+      (function () {
+        var host = location.hostname;
+        var isLocal = host === 'localhost' || host === '127.0.0.1';
+        var isEchoHost = host === 'echo-im.cloud' || host === '8.140.194.214';
+        if (!isLocal && isEchoHost && location.protocol === 'http:') {
+          location.replace('https://echo-im.cloud' + location.pathname + location.search + location.hash);
+        }
+      })();
+    </script>
   </head>
   <body class="overflow-x-hidden">
     <div id="root">

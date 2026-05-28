@@ -6,7 +6,7 @@ import { useToast } from '../contexts/ToastContext';
 import { api, getServerUrl, setServerUrl } from '../api/client';
 import ToggleSwitch from '../components/ToggleSwitch';
 import { useBackground, type PageKey } from '../hooks/useBackground';
-import { Camera, ChevronLeft, LogOut, Image, RotateCcw } from 'lucide-react';
+import { Camera, ChevronLeft, LogOut, Image, Music, Palette, RotateCcw } from 'lucide-react';
 import { assetUrl } from '../utils/assetUrl';
 
 interface BlockEntry {
@@ -31,8 +31,13 @@ export default function SettingsPage() {
   const [blockedUsers, setBlockedUsers] = useState<BlockEntry[]>([]);
   const [notifOn, setNotifOn] = useState(() => localStorage.getItem('echo-notif-enabled') !== 'false');
   const [readReceiptGlobal, setReadReceiptGlobal] = useState(() => localStorage.getItem('echo-read-receipt-global') !== 'false');
+  const [ringtoneUrl, setRingtoneUrl] = useState(() => user?.callRingtoneUrl || localStorage.getItem('echo-call-ringtone-url') || '');
+  const [ringtoneMode, setRingtoneMode] = useState<'peer' | 'mine'>(() => user?.callRingtoneMode || 'peer');
+  const [accentColor, setAccentColor] = useState(() => localStorage.getItem('echo-accent-color') || 'purple');
+  const [ringtoneUploading, setRingtoneUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bgFileInputRef = useRef<HTMLInputElement>(null);
+  const ringtoneInputRef = useRef<HTMLInputElement>(null);
   const { settings, getBg, setBg, resetBg, resetAll, uploadAndGetUrl } = useBackground();
   const [bgTarget, setBgTarget] = useState<PageKey>('chat');
   const showDeveloperTools = user?.email === 'ranyv520@gmail.com' || localStorage.getItem('echo-dev-mode') === 'true';
@@ -40,6 +45,11 @@ export default function SettingsPage() {
   useEffect(() => {
     api<BlockEntry[]>('GET', '/api/blocks').then(setBlockedUsers).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    setRingtoneUrl(user?.callRingtoneUrl || localStorage.getItem('echo-call-ringtone-url') || '');
+    setRingtoneMode(user?.callRingtoneMode || 'peer');
+  }, [user?.callRingtoneUrl, user?.callRingtoneMode]);
 
   const saveProfile = async () => {
     setSaving(true);
@@ -112,6 +122,59 @@ export default function SettingsPage() {
       await setBg(bgTarget, url);
       toast('背景已更新', 'success');
     } catch (err: any) { toast(err.message || '上传失败', 'error'); }
+  };
+
+  const uploadRingtone = async (file: File) => {
+    if (file.size > 80 * 1024 * 1024) { toast('\u94c3\u58f0\u6587\u4ef6\u4e0d\u80fd\u8d85\u8fc7 80MB', 'error'); return; }
+    setRingtoneUploading(true);
+    try {
+      const base = getServerUrl() || '';
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch(base + '/api/upload/ringtone', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+        body: formData,
+      });
+      const contentType = res.headers.get('content-type') || '';
+      const data = contentType.includes('application/json')
+        ? await res.json()
+        : { error: (await res.text()).slice(0, 100) };
+      if (!res.ok) throw new Error(data.error || '\u4e0a\u4f20\u5931\u8d25');
+      await api('PUT', '/api/users/me', { callRingtoneUrl: data.url });
+      localStorage.setItem('echo-call-ringtone-url', data.url);
+      setRingtoneUrl(data.url);
+      updateUser({ callRingtoneUrl: data.url });
+      toast('\u6765\u7535\u94c3\u58f0\u5df2\u66f4\u65b0', 'success');
+    } catch (e: any) {
+      toast(e.message || '\u4e0a\u4f20\u5931\u8d25', 'error');
+    } finally {
+      setRingtoneUploading(false);
+    }
+  };
+
+  const saveRingtoneMode = async (mode: 'peer' | 'mine') => {
+    setRingtoneMode(mode);
+    try {
+      await api('PUT', '/api/users/me', { callRingtoneMode: mode });
+      updateUser({ callRingtoneMode: mode });
+      toast(mode === 'mine' ? '\u547c\u51fa\u65f6\u5df2\u6539\u4e3a\u64ad\u653e\u6211\u7684\u94c3\u58f0' : '\u547c\u51fa\u65f6\u5df2\u6539\u4e3a\u64ad\u653e\u5bf9\u65b9\u94c3\u58f0', 'success');
+    } catch (e: any) {
+      setRingtoneMode(user?.callRingtoneMode || 'peer');
+      toast(e.message || '\u8bbe\u7f6e\u5931\u8d25', 'error');
+    }
+  };
+
+  const resetRingtone = async () => {
+    try {
+      await api('PUT', '/api/users/me', { callRingtoneUrl: '' });
+      localStorage.removeItem('echo-call-ringtone-url');
+      setRingtoneUrl('');
+      updateUser({ callRingtoneUrl: '' });
+      toast('\u5df2\u6062\u590d\u9ed8\u8ba4\u94c3\u58f0', 'info');
+    } catch (e: any) {
+      toast(e.message || '\u8bbe\u7f6e\u5931\u8d25', 'error');
+    }
   };
 
   const pageLabels: Record<PageKey, string> = {
@@ -278,6 +341,85 @@ export default function SettingsPage() {
               if (v && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
             }}
           />
+          <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/60">
+            <div className="mb-3 flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+              <Palette size={15} />
+              <span>{'\u9ad8\u4eae\u989c\u8272'}</span>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { key: 'purple', label: '\u7d2b\u8272', cls: 'bg-primary-500' },
+                { key: 'blue', label: '\u84dd\u8272', cls: 'bg-blue-600' },
+                { key: 'black', label: '\u9ed1\u8272', cls: 'bg-gray-900' },
+              ].map(item => (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => {
+                    setAccentColor(item.key);
+                    localStorage.setItem('echo-accent-color', item.key);
+                    window.dispatchEvent(new Event('echo-accent-color-change'));
+                    toast('\u9ad8\u4eae\u989c\u8272\u5df2\u66f4\u65b0', 'success');
+                  }}
+                  className={`flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs transition-colors ${accentColor === item.key ? 'bg-white text-gray-900 ring-1 ring-gray-200 dark:bg-gray-900 dark:text-gray-100 dark:ring-gray-700' : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300'}`}
+                >
+                  <span className={`h-3 w-3 rounded-full ${item.cls}`} />
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/60">
+            <div className="mb-2 flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+              <Music size={15} />
+              <span>{'\u6765\u7535\u94c3\u58f0'}</span>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => ringtoneInputRef.current?.click()}
+                disabled={ringtoneUploading}
+                className="rounded-xl bg-primary-500 px-3 py-2 text-xs font-medium text-white disabled:opacity-50"
+              >
+                {ringtoneUploading ? '\u4e0a\u4f20\u4e2d...' : ringtoneUrl ? '\u66f4\u6362\u94c3\u58f0' : '\u4e0a\u4f20\u94c3\u58f0'}
+              </button>
+              {ringtoneUrl && (
+                <button
+                  onClick={resetRingtone}
+                  className="rounded-xl bg-gray-200 px-3 py-2 text-xs text-gray-600 dark:bg-gray-700 dark:text-gray-200"
+                >
+                  {'\u6062\u590d\u9ed8\u8ba4'}
+                </button>
+              )}
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 rounded-xl bg-white p-1 dark:bg-gray-900/60">
+              <button
+                type="button"
+                onClick={() => saveRingtoneMode('peer')}
+                className={`rounded-lg px-2 py-2 text-xs transition-colors ${ringtoneMode === 'peer' ? 'bg-primary-500 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'}`}
+              >
+                {'\u547c\u51fa\u542c\u5bf9\u65b9\u94c3\u58f0'}
+              </button>
+              <button
+                type="button"
+                onClick={() => saveRingtoneMode('mine')}
+                className={`rounded-lg px-2 py-2 text-xs transition-colors ${ringtoneMode === 'mine' ? 'bg-primary-500 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'}`}
+              >
+                {'\u547c\u51fa\u542c\u6211\u7684\u94c3\u58f0'}
+              </button>
+            </div>
+            <input
+              ref={ringtoneInputRef}
+              type="file"
+              accept="audio/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) uploadRingtone(file);
+                e.target.value = '';
+              }}
+            />
+            <p className="mt-2 text-[10px] text-gray-400">{'\u652f\u6301 mp3/m4a/aac/wav\u3002\u522b\u4eba\u6253\u7ed9\u4f60\u65f6\u64ad\u653e\u4f60\u7684\u94c3\u58f0\uff1b\u4f60\u547c\u51fa\u65f6\u53ef\u9009\u64ad\u653e\u5bf9\u65b9\u6216\u81ea\u5df1\u7684\u94c3\u58f0\u3002'}</p>
+          </div>
           {showDeveloperTools && (
             <div>
               <label className="mb-1.5 block text-sm text-gray-600 dark:text-gray-400">服务器地址</label>
